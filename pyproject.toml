@@ -1,0 +1,7 @@
+[project]
+name = "ai-forms"
+version = "0.1.0"
+description = "AI-powered form builder that transforms data models into conversational collection workflows with sequential, clustered, or one-shot interaction modes"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
