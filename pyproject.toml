@@ -1,7 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "ai-forms"
 version = "0.1.0"
 description = "AI-powered form builder that transforms data models into conversational collection workflows with sequential, clustered, or one-shot interaction modes"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pydantic>=2.0,<3.0",
+    "typing-extensions>=4.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0", 
+    "black>=23.0.0",
+    "mypy>=1.5.0",
+    "ruff>=0.1.0",
+]
+openai = ["openai>=1.0.0"]
+anthropic = ["anthropic>=0.25.0"]
+all = ["openai>=1.0.0", "anthropic>=0.25.0"]
+
+[dependency-groups]
+dev = [
+    "hatchling>=1.27.0",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.1.0",
+]
