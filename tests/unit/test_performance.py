@@ -179,15 +179,22 @@ class TestScalabilityLimits:
         form = AIForm(SimpleModel)
         await form.start()
         
-        # Simulate many validation failures (memory stress test)
+        # First, provide valid name to get to age field
+        response = await form.respond("TestName")
+        assert not response.errors
+        assert response.current_field == "age"
+        
+        # Now simulate many validation failures on age field (memory stress test)
         for i in range(100):
             response = await form.respond("invalid age input")
-            assert response.errors  # Should consistently fail
+            assert response.errors  # Should consistently fail on age field
+            assert response.current_field == "age"  # Should stay on age field
         
         # Should still work after many failures
-        response = await form.respond("John")  # Valid name
+        response = await form.respond("25")  # Valid age
         assert not response.errors
-        assert len(response.collected_fields) == 1
+        assert response.is_complete
+        assert len(response.collected_fields) == 2  # Both name and age collected
     
     def test_deeply_nested_dependencies(self):
         """Test deeply nested field dependencies"""

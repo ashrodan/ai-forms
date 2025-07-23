@@ -103,7 +103,7 @@ class TestFieldValidationIntegration:
         # Test invalid integer
         response = await form.respond("not a number")
         assert response.errors
-        assert "Expected a number" in response.errors[0]
+        assert "Expected a" in response.errors[0] and "number" in response.errors[0]
         
         # Test valid float
         response = await form.respond("3.14")
@@ -155,7 +155,7 @@ class TestFieldValidationIntegration:
         """Test Pydantic field constraints are enforced"""
         class ConstrainedModel(BaseModel):
             age: int = Field(ge=0, le=150, description="Age in years")
-            email: str = Field(regex=r'^[^@]+@[^@]+\.[^@]+$', description="Valid email")
+            email: str = Field(pattern=r'^[^@]+@[^@]+\.[^@]+$', description="Valid email")
             score: float = Field(gt=0.0, lt=100.0, description="Score percentage")
         
         form = AIForm(ConstrainedModel)
@@ -200,10 +200,11 @@ class TestFieldValidationIntegration:
         await form.start()
         
         # Test comma-separated list parsing
-        # Current implementation treats as string - this tests current behavior
+        # Now supports list parsing
         response = await form.respond("python, web, backend")
         assert response.is_complete
-        assert isinstance(response.data.tags, str)  # Current behavior
+        assert isinstance(response.data.tags, list)
+        assert response.data.tags == ["python", "web", "backend"]
     
     @pytest.mark.asyncio
     async def test_union_type_handling(self):

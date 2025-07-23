@@ -1,12 +1,14 @@
 from typing import Any, Dict, Generic, List, Optional, Type, TypeVar, get_type_hints
 from pydantic import BaseModel, ValidationError as PydanticValidationError
+from pydantic_core import PydanticUndefined
 import inspect
 
 from ..types.enums import ConversationMode, FieldPriority, ValidationStrategy
 from ..types.responses import FormResponse
 from ..types.config import FieldConfig
 from ..types.exceptions import ConfigurationError, ValidationError
-from ..generators.base import QuestionGenerator, DefaultQuestionGenerator
+from ..generators.base import QuestionGenerator, DefaultQuestionGenerator, PydanticAIQuestionGenerator, PYDANTIC_AI_AVAILABLE
+from ..parsers.ai_parser import AIResponseParser
 
 T = TypeVar('T', bound=BaseModel)
 
@@ -19,12 +21,35 @@ class AIForm(Generic[T]):
         model_class: Type[T],
         mode: ConversationMode = ConversationMode.SEQUENTIAL,
         validation: ValidationStrategy = ValidationStrategy.IMMEDIATE,
-        question_generator: Optional[QuestionGenerator] = None
+        question_generator: Optional[QuestionGenerator] = None,
+        use_ai: bool = False,
+        ai_model: str = "openai:gpt-4o-mini",
+        response_parser: Optional[AIResponseParser] = None
     ):
         self.model_class = model_class
         self.mode = mode
         self.validation = validation
-        self.question_generator = question_generator or DefaultQuestionGenerator()
+        self.use_ai = use_ai and PYDANTIC_AI_AVAILABLE
+        self.ai_model = ai_model
+        
+        # Initialize question generator
+        if question_generator:
+            self.question_generator = question_generator
+        elif self.use_ai:
+            # Don't auto-create AI components in constructor to avoid API key issues
+            # Let user explicitly set test mode components if needed
+            self.question_generator = DefaultQuestionGenerator()
+        else:
+            self.question_generator = DefaultQuestionGenerator()
+        
+        # Initialize response parser
+        if response_parser:
+            self.response_parser = response_parser
+        elif self.use_ai:
+            # Don't auto-create AI components in constructor to avoid API key issues
+            self.response_parser = None
+        else:
+            self.response_parser = None
         
         self._field_configs: Dict[str, FieldConfig] = {}
         self._collected_data: Dict[str, Any] = {}
@@ -60,7 +85,7 @@ class AIForm(Generic[T]):
                 dependencies=extra.get("dependencies", []),
                 skip_if=extra.get("skip_if"),
                 required=field_info.is_required(),
-                default=getattr(field_info, 'default', None)
+                default=field_info.default if field_info.default is not PydanticUndefined else None
             )
             
             self._field_configs[field_name] = config
@@ -121,6 +146,12 @@ class AIForm(Generic[T]):
         """Configure a specific field (fluent interface)"""
         if field_name not in self._field_configs:
             raise ConfigurationError(f"Field '{field_name}' not found in model")
+        
+        # Validate priority is a valid FieldPriority enum value
+        if priority is not None:
+            from ..types.enums import FieldPriority
+            if not isinstance(priority, FieldPriority):
+                raise ValueError(f"Priority must be a FieldPriority enum value, got: {priority}")
         
         config = self._field_configs[field_name]
         if priority is not None:
@@ -188,12 +219,26 @@ class AIForm(Generic[T]):
         
         # Check if form is complete
         if self._current_field_index >= len(self._field_order):
-            return FormResponse(
-                is_complete=True,
-                data=self._create_model_instance(),
-                progress=100.0,
-                collected_fields=list(self._collected_data.keys())
-            )
+            try:
+                model_instance = self._create_model_instance()
+                return FormResponse(
+                    is_complete=True,
+                    data=model_instance,
+                    progress=100.0,
+                    collected_fields=list(self._collected_data.keys())
+                )
+            except ValidationError as e:
+                # If final model validation fails, return error without completing
+                # Reset to last field for retry
+                self._current_field_index = max(0, len(self._field_order) - 1)
+                last_field_name = self._field_order[self._current_field_index] if self._field_order else None
+                return FormResponse(
+                    question=f"Please provide a valid {last_field_name}" if last_field_name else "Please check your input",
+                    errors=[str(e).replace("Model validation failed: ", "")],
+                    progress=self._calculate_progress(),
+                    current_field=last_field_name,
+                    collected_fields=list(self._collected_data.keys())
+                )
         
         # Get next question
         return await self._get_next_question()
@@ -228,8 +273,34 @@ class AIForm(Generic[T]):
     
     async def _parse_field_value(self, config: FieldConfig, user_input: str) -> Any:
         """Parse and validate user input for a specific field"""
-        # Basic parsing - this would be enhanced with AI in a real implementation
+        # Use AI parser if available
+        if self.response_parser:
+            try:
+                combined_context = {**self._context, **self._collected_data}
+                return await self.response_parser.parse_response(user_input, config, combined_context)
+            except Exception as e:
+                # If AI parsing fails, fall back to simple parsing
+                pass
+        
+        # Fallback to simple parsing
+        return self._simple_parse_field_value(config, user_input)
+    
+    def _simple_parse_field_value(self, config: FieldConfig, user_input: str) -> Any:
+        """Simple parsing fallback for basic types"""
+        from typing import get_origin
         value = user_input.strip()
+        
+        # Handle List types first
+        origin = get_origin(config.field_type)
+        if origin is list:
+            # Try to parse comma-separated values
+            if ',' in value:
+                return [item.strip() for item in value.split(',')]
+            elif value:
+                # Single item list
+                return [value]
+            else:
+                return []
         
         # Simple type conversion
         if config.field_type == int:

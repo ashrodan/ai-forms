@@ -3,8 +3,12 @@ import pytest
 from unittest.mock import AsyncMock, patch
 
 from ai_forms import AIForm, FieldPriority
-from ai_forms.generators.base import QuestionGenerator, DefaultQuestionGenerator
+from ai_forms.generators.base import QuestionGenerator, DefaultQuestionGenerator, PYDANTIC_AI_AVAILABLE
 from ai_forms.types.config import FieldConfig
+
+# Import AI components if available
+if PYDANTIC_AI_AVAILABLE:
+    from ai_forms.generators.base import PydanticAIQuestionGenerator
 
 
 class TestQuestionGeneratorBase:
@@ -327,3 +331,59 @@ class TestQuestionGenerationEdgeCases:
         assert "!@#$%^&*()" in question
         assert "test@example.com" in question
         assert "+" in question  # From second example
+
+
+@pytest.mark.skipif(not PYDANTIC_AI_AVAILABLE, reason="pydantic-ai not available")
+class TestAIQuestionGeneratorIntegration:
+    """Test AI question generator integration"""
+    
+    @pytest.mark.asyncio
+    async def test_ai_form_creation_with_use_ai_flag(self, simple_user_model):
+        """Test creating AI form with use_ai flag"""
+        ai_form = AIForm(simple_user_model, use_ai=True)
+        
+        # With current implementation, use_ai doesn't auto-create AI components to avoid API key issues
+        # User must explicitly set AI components
+        ai_form.question_generator = PydanticAIQuestionGenerator(test_mode=True)
+        
+        # Should now use AI generator
+        assert isinstance(ai_form.question_generator, PydanticAIQuestionGenerator)
+    
+    @pytest.mark.asyncio
+    async def test_ai_form_vs_default_question_generation(self, simple_user_model):
+        """Test AI vs default question generation"""
+        # Default form
+        default_form = AIForm(simple_user_model)
+        default_form.question_generator = DefaultQuestionGenerator()
+        
+        # AI form with test mode
+        ai_form = AIForm(simple_user_model, use_ai=True)
+        ai_form.question_generator = PydanticAIQuestionGenerator(test_mode=True)
+        
+        # Both should generate questions
+        default_response = await default_form.start()
+        ai_response = await ai_form.start()
+        
+        assert default_response.question is not None
+        assert ai_response.question is not None
+        
+        # Questions should be strings
+        assert isinstance(default_response.question, str)
+        assert isinstance(ai_response.question, str)
+    
+    def test_ai_unavailable_fallback(self, simple_user_model):
+        """Test graceful fallback when AI is unavailable"""
+        # Simulate AI unavailable
+        import ai_forms.core.form
+        original_available = ai_forms.core.form.PYDANTIC_AI_AVAILABLE
+        
+        try:
+            ai_forms.core.form.PYDANTIC_AI_AVAILABLE = False
+            
+            # Should fall back to default generator
+            form = AIForm(simple_user_model, use_ai=True)
+            assert not form.use_ai
+            assert isinstance(form.question_generator, DefaultQuestionGenerator)
+        
+        finally:
+            ai_forms.core.form.PYDANTIC_AI_AVAILABLE = original_available

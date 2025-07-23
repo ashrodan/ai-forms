@@ -1,0 +1,92 @@
+# Pydantic AI Integration Plan
+                                           
+ Phase 1: Core Integration (High Priority) 
+                                           
+ 1. Update Dependencies                    
+ - Add pydantic-ai>=0.0.12 to              
+ pyproject.toml core dependencies          
+ - Add pydantic-ai[test] to dev            
+ dependencies for testing utilities        
+                                           
+ 2. Create AI-Powered Question Generator   
+ - New PydanticAIQuestionGenerator class   
+ using Agent with result_type=str          
+ - System prompt for conversational form   
+ interactions                              
+ - Context integration using agent         
+ dependencies                              
+ - Fallback to DefaultQuestionGenerator    
+ for reliability                           
+                                           
+ 3. Add AI Response Parser                 
+ - New AIResponseParser class for          
+ intelligent field parsing                 
+ - Type-aware parsing using Pydantic       
+ models as result_type                     
+ - Handle complex types (lists, nested     
+ objects) that current parser can't        
+ - Graceful fallback to current            
+ string-based parsing                      
+                                           
+ 4. Testing Infrastructure                 
+ - Add TestModel integration for           
+ deterministic LLM testing                 
+ - Mock conversation flows with predefined 
+  responses                                
+ - Test AI question generation quality     
+ - Test AI parsing accuracy                
+ - Add performance benchmarks for AI calls 
+                                           
+ Phase 2: Enhanced Features (Medium        
+ Priority)                                 
+                                           
+ 5. Context-Aware Conversations            
+ - Update form flow to pass collected data 
+  to AI generator                          
+ - Implement personalized question         
+ generation                                
+ - Add conversation memory and follow-up   
+ questions                                 
+ - Test dynamic questioning based on       
+ previous responses                        
+                                           
+ 6. Advanced Error Handling                
+ - AI-powered validation error             
+ explanations                              
+ - Conversational recovery from parsing    
+ failures                                  
+ - Multi-turn clarification for ambiguous  
+ responses                                 
+ - Test error scenarios with AI assistance 
+                                           
+ Phase 3: Advanced Capabilities (Future)   
+                                           
+ 7. Intelligent Form Flow                  
+ - Dynamic field ordering based on         
+ conversation context                      
+ - Skip condition evaluation using AI      
+ reasoning                                 
+ - Cluster-based questioning with AI       
+ grouping                                  
+ - Test complex conversation flows         
+                                           
+ 8. Multi-Provider Support                 
+ - Configuration for different LLM         
+ providers                                 
+ - Provider fallback strategies            
+ - Cost optimization and rate limiting     
+ - Test provider switching and error       
+ handling                                  
+                                           
+ Key Implementation Details                
+                                           
+ - Backward Compatibility: Keep            
+ DefaultQuestionGenerator as fallback      
+ - Configuration: Add AI settings to form  
+ configuration                             
+ - Testing: Extensive TestModel usage for  
+ reliable CI/CD                            
+ - Performance: Add caching and async      
+ optimization                              
+ - Error Handling: Graceful degradation    
+ when AI unavailable                       

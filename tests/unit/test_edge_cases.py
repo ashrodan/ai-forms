@@ -1,7 +1,7 @@
 """Edge cases and error handling tests"""
 import pytest
 from typing import Dict, Any, List, Optional, Union
-from pydantic import BaseModel, Field, ValidationError as PydanticValidationError
+from pydantic import BaseModel, Field, ValidationError as PydanticValidationError, field_validator
 from unittest.mock import AsyncMock, patch
 
 from ai_forms import AIForm, ConversationMode, FieldPriority, ValidationStrategy
@@ -290,11 +290,12 @@ class TestConcurrencyEdgeCases:
         
         # This tests the current implementation - in a real concurrent scenario,
         # we'd need proper state management
-        response1 = await simple_form.respond("Alice")
-        response2 = await simple_form.respond("Bob")  # Overwrites Alice
+        response1 = await simple_form.respond("Alice")  # Goes to name field
+        response2 = await simple_form.respond("Bob")   # Goes to email field
         
-        # Second response should overwrite first
-        assert response2.collected_fields[-1] == "name"  # Last collected
+        # Form progresses through fields sequentially
+        assert response1.collected_fields[-1] == "name"  # First response collected name
+        assert response2.collected_fields[-1] == "email"  # Second response collected email
     
     @pytest.mark.asyncio
     async def test_form_state_after_completion(self, simple_form):
@@ -388,7 +389,8 @@ class TestErrorPropagation:
             # Field with validator that always fails
             failing_field: str = Field(description="Always fails")
             
-            @validator('failing_field')
+            @field_validator('failing_field')
+            @classmethod
             def validate_failing(cls, v):
                 raise ValueError("This field always fails validation")
         
