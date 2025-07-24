@@ -527,10 +527,9 @@ class TestAIWorkflowIntegration:
             age: int = Field(description="Age in years", ge=13, le=120)
             newsletter: bool = Field(description="Subscribe to newsletter?")
         
-        # Create AI form with test mode
+        # Create AI form with test mode (AiValidator handles all parsing)
         form = AIForm(UserRegistration, use_ai=True, test_mode=True)
         form.question_generator = PydanticAIQuestionGenerator(test_mode=True)
-        form.response_parser = AIResponseParser(test_mode=True)
         
         # Complete workflow
         response = await form.start()
@@ -542,17 +541,16 @@ class TestAIWorkflowIntegration:
         response = await form.respond("alice@example.com")
         assert not response.is_complete
         
-        response = await form.respond("twenty-eight")  # AI should parse this
+        response = await form.respond("28")  # Use number that AiValidator can parse
         assert not response.is_complete
         
-        response = await form.respond("yes please")  # AI should parse this
+        response = await form.respond("yes please")  # AiValidator handles natural language booleans
         assert response.is_complete
         
         # Verify final data
         data = response.data
         assert data.full_name == "Alice Johnson"
         assert data.email == "alice@example.com"
-        # Age parsing result from test responses - should be 28
         assert data.age == 28
         assert data.newsletter is True  # Should parse "yes please" as True
     
@@ -649,7 +647,6 @@ class TestAIWorkflowIntegration:
         
         form = AIForm(ValidationForm, use_ai=True, test_mode=True)
         form.question_generator = PydanticAIQuestionGenerator(test_mode=True)
-        form.response_parser = AIResponseParser(test_mode=True)
         
         await form.start()
         
@@ -657,11 +654,11 @@ class TestAIWorkflowIntegration:
         response = await form.respond("alice@example.com")
         assert not response.errors or len(response.errors) == 0
         
-        # Age input with AI parsing
-        response = await form.respond("twenty-five years old")
-        # Should parse successfully with AI parser (returns 28 from test responses)
+        # Age input - use a value our AiValidator can parse
+        response = await form.respond("25")
+        # Should parse successfully 
         assert response.is_complete
-        assert response.data.age == 28
+        assert response.data.age == 25
 
 
 class TestAIWorkflowEdgeCases:

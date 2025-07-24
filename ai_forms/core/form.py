@@ -8,8 +8,7 @@ from ..types.responses import FormResponse
 from ..types.config import FieldConfig
 from ..types.exceptions import ConfigurationError, ValidationError
 from ..generators.base import QuestionGenerator, DefaultQuestionGenerator, PydanticAIQuestionGenerator, PYDANTIC_AI_AVAILABLE
-from ..parsers.ai_parser import AIResponseParser
-from ..validators.ai_tools import AIValidationTools, PYDANTIC_AI_AVAILABLE as AI_TOOLS_AVAILABLE
+from ..validation.ai_validator import AiValidator
 
 T = TypeVar('T', bound=BaseModel)
 
@@ -25,14 +24,12 @@ class AIForm(Generic[T]):
         question_generator: Optional[QuestionGenerator] = None,
         use_ai: bool = False,
         ai_model: str = "openai:gpt-4o-mini",
-        response_parser: Optional[AIResponseParser] = None,
-        validation_tools: Optional[AIValidationTools] = None,
         test_mode: bool = False
     ):
         self.model_class = model_class
         self.mode = mode
         self.validation = validation
-        self.use_ai = use_ai and PYDANTIC_AI_AVAILABLE
+        self.use_ai = use_ai
         self.ai_model = ai_model
         self.test_mode = test_mode
         
@@ -46,23 +43,12 @@ class AIForm(Generic[T]):
         else:
             self.question_generator = DefaultQuestionGenerator()
         
-        # Initialize response parser
-        if response_parser:
-            self.response_parser = response_parser
-        elif self.use_ai:
-            # Don't auto-create AI components in constructor to avoid API key issues
-            self.response_parser = None
-        else:
-            self.response_parser = None
-        
-        # Initialize AI validation tools as core validation mechanism
-        if validation_tools:
-            self.validation_tools = validation_tools
-        elif self.use_ai and AI_TOOLS_AVAILABLE:
-            # Create AI validation tools when AI is enabled, pass test_mode to control behavior
-            self.validation_tools = AIValidationTools(ai_model, test_mode)
-        else:
-            self.validation_tools = None
+        # Initialize AI validator (core validation mechanism)
+        self.ai_validator = AiValidator(
+            use_ai=self.use_ai,
+            test_mode=test_mode,
+            ai_model=ai_model
+        )
         
         self._field_configs: Dict[str, FieldConfig] = {}
         self._collected_data: Dict[str, Any] = {}
@@ -292,116 +278,13 @@ class AIForm(Generic[T]):
         )
     
     async def _parse_field_value(self, config: FieldConfig, user_input: str) -> Any:
-        """Parse and validate user input for a specific field"""
-        # Try AI validation tools FIRST (they do their own parsing)
-        if self.validation_tools:
-            try:
-                result = await self.validation_tools.validate_field_with_ai(
-                    config, 
-                    user_input,  # Pass raw user input directly to AI tools
-                    self._collected_data
-                )
-                
-                if not result.is_valid:
-                    raise ValidationError(result.error_message)
-                
-                return result.parsed_value
-            except Exception as e:
-                # If AI validation fails, fall back to other methods
-                if "ValidationError" in str(type(e)):
-                    raise e
-        
-        # Use AI parser if available (secondary option)
-        if self.response_parser:
-            try:
-                combined_context = {**self._context, **self._collected_data}
-                parsed_value = await self.response_parser.parse_response(user_input, config, combined_context)
-                # Use basic validation fallback
-                return self._validate_field_basic_fallback(config, parsed_value)
-            except Exception as e:
-                # If AI parsing fails, fall back to simple parsing
-                pass
-        
-        # Final fallback to simple parsing with basic validation
-        simple_value = self._simple_parse_field_value(config, user_input)
-        return self._validate_field_basic_fallback(config, simple_value)
+        """Parse and validate user input using AI-first validation"""
+        return await self.ai_validator.validate_field(
+            config,
+            user_input,
+            self._collected_data
+        )
     
-    def _simple_parse_field_value(self, config: FieldConfig, user_input: str) -> Any:
-        """Simple parsing fallback for basic types"""
-        from typing import get_origin
-        value = user_input.strip()
-        
-        # Handle List types first
-        origin = get_origin(config.field_type)
-        if origin is list:
-            # Try to parse comma-separated values
-            if ',' in value:
-                return [item.strip() for item in value.split(',')]
-            elif value:
-                # Single item list
-                return [value]
-            else:
-                return []
-        
-        # Simple type conversion
-        if config.field_type == int:
-            try:
-                return int(value)
-            except ValueError:
-                raise ValidationError(f"Expected a number, got: {value}")
-        elif config.field_type == float:
-            try:
-                return float(value)
-            except ValueError:
-                raise ValidationError(f"Expected a decimal number, got: {value}")
-        elif config.field_type == bool:
-            lower_val = value.lower()
-            if lower_val in ("yes", "true", "1", "y"):
-                return True
-            elif lower_val in ("no", "false", "0", "n"):
-                return False
-            else:
-                raise ValidationError(f"Expected yes/no, got: {value}")
-        
-        return value
-    
-    async def _validate_field_with_ai_tools(self, config: FieldConfig, value: Any) -> Any:
-        """Validate field using AI validation tools as core mechanism"""
-        if not self.validation_tools:
-            # Fallback to basic validation if AI tools not available
-            return self._validate_field_basic_fallback(config, value)
-        
-        try:
-            # Use AI validation tools as primary validation
-            result = await self.validation_tools.validate_field_with_ai(
-                config, 
-                str(value), 
-                self._collected_data
-            )
-            
-            if not result.is_valid:
-                raise ValidationError(result.error_message)
-            
-            return result.parsed_value
-            
-        except Exception as e:
-            # Fallback on AI tool failure
-            if "ValidationError" in str(type(e)):
-                raise e
-            return self._validate_field_basic_fallback(config, value)
-    
-    def _validate_field_basic_fallback(self, config: FieldConfig, value: Any) -> Any:
-        """Fallback validation when AI tools not available"""
-        # Email validation based on validation hint
-        if (config.validation_hint and 
-            'email' in config.validation_hint.lower() and 
-            isinstance(value, str)):
-            from ..validators.base import EmailValidator
-            validator = EmailValidator()
-            if not validator.validate(value, {}):
-                raise ValidationError(validator.get_error_message(value))
-        
-        return value
     
     def _handle_final_validation_error(self, e: ValidationError) -> FormResponse[T]:
         """Handle final model validation errors by directing to specific fields"""
@@ -459,32 +342,22 @@ class AIForm(Generic[T]):
         )
     
     async def _create_model_instance(self) -> T:
-        """Create and validate Pydantic model instance with AI tools"""
-        # First try AI-powered final validation
-        if self.validation_tools:
-            try:
-                result = await self.validation_tools.validate_form_with_ai(
-                    self._collected_data,
-                    self.model_class,
-                    self._field_configs
-                )
-                
-                if not result.is_valid:
-                    raise ValidationError(result.error_message)
-                
-                # If AI validation passes, create the model
-                return self.model_class(**result.parsed_value)
-                
-            except Exception as e:
-                # If AI validation fails, fall back to basic Pydantic validation
-                if "ValidationError" in str(type(e)):
-                    raise e
-        
-        # Fallback to basic Pydantic model validation
+        """Create and validate Pydantic model instance using AI validator"""
         try:
-            return self.model_class(**self._collected_data)
-        except PydanticValidationError as e:
-            raise ValidationError(f"Model validation failed: {e}")
+            # Use AI validator for form validation
+            validated_data = await self.ai_validator.validate_form(
+                self._collected_data,
+                self.model_class,
+                self._field_configs
+            )
+            
+            # Create the model instance
+            return self.model_class(**validated_data)
+            
+        except ValidationError:
+            raise
+        except Exception as e:
+            raise ValidationError(f"Model creation failed: {e}")
     
     def _calculate_progress(self) -> float:
         """Calculate form completion progress"""

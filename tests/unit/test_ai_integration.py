@@ -221,25 +221,6 @@ class TestAIFormIntegration:
         response = await form.respond("Alice")  # Simple string
         assert not response.errors or len(response.errors) == 0
         
-    def test_ai_form_without_pydantic_ai(self):
-        """Test that AI form degrades gracefully without pydantic-ai"""
-        # Simulate pydantic-ai unavailable
-        import ai_forms.core.form
-        original_available = ai_forms.core.form.PYDANTIC_AI_AVAILABLE
-        
-        try:
-            ai_forms.core.form.PYDANTIC_AI_AVAILABLE = False
-            
-            class TestModel(BaseModel):
-                name: str = Field(description="Name")
-            
-            # Should fall back to default generator
-            form = AIForm(TestModel, use_ai=True, test_mode=True)  # use_ai=True but unavailable
-            assert not form.use_ai  # Should be False due to unavailability
-            assert isinstance(form.question_generator, ai_forms.generators.base.DefaultQuestionGenerator)
-            
-        finally:
-            ai_forms.core.form.PYDANTIC_AI_AVAILABLE = original_available
 
 
 class TestAIFormComplexTypes:

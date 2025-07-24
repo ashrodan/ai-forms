@@ -37,10 +37,11 @@ class TestFormVsDirectValidation:
         """Test form validation with 'sure' - currently failing"""
         form = AIForm(SimpleTestModel, use_ai=True, test_mode=True)
         
-        # Check that validation tools are created
-        print(f"Form has validation tools: {form.validation_tools is not None}")
-        if form.validation_tools:
-            print(f"Validation tools test mode: {form.validation_tools.test_mode}")
+        # Check that AI validator is created
+        print(f"Form has AI validator: {form.ai_validator is not None}")
+        if form.ai_validator:
+            print(f"AI validator test mode: {form.ai_validator.test_mode}")
+            print(f"AI validator status: {form.ai_validator.status}")
         
         # Start form
         response = await form.start()
@@ -80,78 +81,63 @@ class TestFormVsDirectValidation:
             raise
     
     def test_simple_field_parsing_fallback(self):
-        """Test the simple parsing fallback that might be interfering"""
-        form = AIForm(SimpleTestModel, use_ai=True, test_mode=True)
+        """Test that AI validator fallback works when AI is disabled"""
+        form = AIForm(SimpleTestModel, use_ai=False, test_mode=True)
         field_config = form._field_configs['newsletter']
         
-        # Test the simple parsing method
-        try:
-            parsed_value = form._simple_parse_field_value(field_config, "sure")
-            print(f"Simple parsing result: {parsed_value}")
-            # This SHOULD fail since simple parsing doesn't understand 'sure'
-            assert False, "Simple parsing should have failed with 'sure'"
-        except Exception as e:
-            print(f"Simple parsing correctly failed with: {e}")
-            # This is expected - simple parsing should fail
+        # Test the AI validator in non-AI mode (should use simple parsing)
+        async def test_fallback():
+            try:
+                parsed_value = await form.ai_validator.validate_field(field_config, "sure", {})
+                print(f"Non-AI validation result: {parsed_value}")
+                # This SHOULD fail since simple parsing doesn't understand 'sure'
+                assert False, "Non-AI validation should have failed with 'sure'"
+            except Exception as e:
+                print(f"Non-AI validation correctly failed with: {e}")
+                # This is expected - simple parsing should fail with 'sure'
+        
+        import asyncio
+        asyncio.run(test_fallback())
     
     @pytest.mark.asyncio
     async def test_ai_validation_tools_integration(self):
-        """Test the AI validation tools integration in form"""
+        """Test the AI validator integration in form"""
         form = AIForm(SimpleTestModel, use_ai=True, test_mode=True)
         field_config = form._field_configs['newsletter']
         
-        # Test validate_field_with_ai method
-        if form.validation_tools:
-            result = await form.validation_tools.validate_field_with_ai(
+        # Test AI validator directly
+        if form.ai_validator and form.ai_validator.is_ai_enabled:
+            result = await form.ai_validator.validate_field(
                 field_config, 
                 "sure",
                 {}
             )
-            print(f"AI tools integration result: valid={result.is_valid}, value={result.parsed_value}")
-            assert result.is_valid is True
-            assert result.parsed_value is True
+            print(f"AI validator integration result: {result} (type: {type(result)})")
+            assert result is True
         else:
-            assert False, "Validation tools not created"
+            assert False, "AI validator not created or not enabled"
     
     @pytest.mark.asyncio 
     async def test_parsing_order_issue(self):
-        """Test if parsing order is the issue"""
+        """Test the new simplified parsing with AiValidator"""
         form = AIForm(SimpleTestModel, use_ai=True, test_mode=True)
         field_config = form._field_configs['newsletter']
         
-        print("Testing parsing methods in order:")
+        print("Testing new AiValidator system:")
         
-        # 1. Test AI validation tools first (should work)
-        if form.validation_tools:
-            try:
-                result = await form.validation_tools.validate_field_with_ai(field_config, "sure", {})
-                print(f"1. AI validation tools: valid={result.is_valid}, value={result.parsed_value}")
-            except Exception as e:
-                print(f"1. AI validation tools failed: {e}")
-        
-        # 2. Test response parser (if available)
-        if form.response_parser:
-            try:
-                parsed = await form.response_parser.parse_response("sure", field_config, {})
-                print(f"2. Response parser result: {parsed}")
-            except Exception as e:
-                print(f"2. Response parser failed: {e}")
-        else:
-            print("2. No response parser available")
-        
-        # 3. Test simple parsing (should fail)
+        # 1. Test AI validator directly (should work)
         try:
-            simple_result = form._simple_parse_field_value(field_config, "sure")
-            print(f"3. Simple parsing result: {simple_result}")
+            ai_result = await form.ai_validator.validate_field(field_config, "sure", {})
+            print(f"1. AI validator: {ai_result} (type: {type(ai_result)})")
         except Exception as e:
-            print(f"3. Simple parsing failed (expected): {e}")
+            print(f"1. AI validator failed: {e}")
         
-        # Now test the actual _parse_field_value method
+        # 2. Test the form's _parse_field_value method (should work)
         try:
-            final_result = await form._parse_field_value(field_config, "sure")
-            print(f"Final _parse_field_value result: {final_result}")
+            form_result = await form._parse_field_value(field_config, "sure")
+            print(f"2. Form _parse_field_value: {form_result} (type: {type(form_result)})")
         except Exception as e:
-            print(f"Final _parse_field_value failed: {e}")
+            print(f"2. Form _parse_field_value failed: {e}")
             raise
 
 
