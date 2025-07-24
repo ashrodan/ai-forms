@@ -9,6 +9,7 @@ from ..types.config import FieldConfig
 from ..types.exceptions import ConfigurationError, ValidationError
 from ..generators.base import QuestionGenerator, DefaultQuestionGenerator, PydanticAIQuestionGenerator, PYDANTIC_AI_AVAILABLE
 from ..parsers.ai_parser import AIResponseParser
+from ..validators.ai_tools import AIValidationTools, PYDANTIC_AI_AVAILABLE as AI_TOOLS_AVAILABLE
 
 T = TypeVar('T', bound=BaseModel)
 
@@ -24,13 +25,16 @@ class AIForm(Generic[T]):
         question_generator: Optional[QuestionGenerator] = None,
         use_ai: bool = False,
         ai_model: str = "openai:gpt-4o-mini",
-        response_parser: Optional[AIResponseParser] = None
+        response_parser: Optional[AIResponseParser] = None,
+        validation_tools: Optional[AIValidationTools] = None,
+        test_mode: bool = False
     ):
         self.model_class = model_class
         self.mode = mode
         self.validation = validation
         self.use_ai = use_ai and PYDANTIC_AI_AVAILABLE
         self.ai_model = ai_model
+        self.test_mode = test_mode
         
         # Initialize question generator
         if question_generator:
@@ -50,6 +54,15 @@ class AIForm(Generic[T]):
             self.response_parser = None
         else:
             self.response_parser = None
+        
+        # Initialize AI validation tools as core validation mechanism
+        if validation_tools:
+            self.validation_tools = validation_tools
+        elif self.use_ai and AI_TOOLS_AVAILABLE:
+            # Create AI validation tools when AI is enabled, pass test_mode to control behavior
+            self.validation_tools = AIValidationTools(ai_model, test_mode)
+        else:
+            self.validation_tools = None
         
         self._field_configs: Dict[str, FieldConfig] = {}
         self._collected_data: Dict[str, Any] = {}
@@ -180,7 +193,7 @@ class AIForm(Generic[T]):
         if not self._field_order:
             return FormResponse(
                 is_complete=True,
-                data=self.model_class(),
+                data=await self._create_model_instance() if self._field_order else self.model_class(),
                 progress=100.0
             )
         
@@ -194,7 +207,7 @@ class AIForm(Generic[T]):
         if self._current_field_index >= len(self._field_order):
             return FormResponse(
                 is_complete=True,
-                data=self._create_model_instance(),
+                data=await self._create_model_instance(),
                 progress=100.0
             )
         
@@ -206,6 +219,22 @@ class AIForm(Generic[T]):
             parsed_value = await self._parse_field_value(current_config, user_input)
             self._collected_data[current_field_name] = parsed_value
             self._current_field_index += 1
+            
+            # Check if we've now collected all fields (this handles the case where
+            # we're fixing a field after final validation error)
+            if len(self._collected_data) == len(self._field_order):
+                # All fields collected, try final validation
+                try:
+                    model_instance = await self._create_model_instance()
+                    return FormResponse(
+                        is_complete=True,
+                        data=model_instance,
+                        progress=100.0,
+                        collected_fields=list(self._collected_data.keys())
+                    )
+                except ValidationError as e:
+                    # Handle final model validation errors
+                    return self._handle_final_validation_error(e)
             
         except ValidationError as e:
             return FormResponse(
@@ -220,7 +249,7 @@ class AIForm(Generic[T]):
         # Check if form is complete
         if self._current_field_index >= len(self._field_order):
             try:
-                model_instance = self._create_model_instance()
+                model_instance = await self._create_model_instance()
                 return FormResponse(
                     is_complete=True,
                     data=model_instance,
@@ -228,17 +257,8 @@ class AIForm(Generic[T]):
                     collected_fields=list(self._collected_data.keys())
                 )
             except ValidationError as e:
-                # If final model validation fails, return error without completing
-                # Reset to last field for retry
-                self._current_field_index = max(0, len(self._field_order) - 1)
-                last_field_name = self._field_order[self._current_field_index] if self._field_order else None
-                return FormResponse(
-                    question=f"Please provide a valid {last_field_name}" if last_field_name else "Please check your input",
-                    errors=[str(e).replace("Model validation failed: ", "")],
-                    progress=self._calculate_progress(),
-                    current_field=last_field_name,
-                    collected_fields=list(self._collected_data.keys())
-                )
+                # Handle final model validation errors by directing user to specific field
+                return self._handle_final_validation_error(e)
         
         # Get next question
         return await self._get_next_question()
@@ -248,7 +268,7 @@ class AIForm(Generic[T]):
         if self._current_field_index >= len(self._field_order):
             return FormResponse(
                 is_complete=True,
-                data=self._create_model_instance(),
+                data=await self._create_model_instance(),
                 progress=100.0
             )
         
@@ -273,17 +293,38 @@ class AIForm(Generic[T]):
     
     async def _parse_field_value(self, config: FieldConfig, user_input: str) -> Any:
         """Parse and validate user input for a specific field"""
-        # Use AI parser if available
+        # Try AI validation tools FIRST (they do their own parsing)
+        if self.validation_tools:
+            try:
+                result = await self.validation_tools.validate_field_with_ai(
+                    config, 
+                    user_input,  # Pass raw user input directly to AI tools
+                    self._collected_data
+                )
+                
+                if not result.is_valid:
+                    raise ValidationError(result.error_message)
+                
+                return result.parsed_value
+            except Exception as e:
+                # If AI validation fails, fall back to other methods
+                if "ValidationError" in str(type(e)):
+                    raise e
+        
+        # Use AI parser if available (secondary option)
         if self.response_parser:
             try:
                 combined_context = {**self._context, **self._collected_data}
-                return await self.response_parser.parse_response(user_input, config, combined_context)
+                parsed_value = await self.response_parser.parse_response(user_input, config, combined_context)
+                # Use basic validation fallback
+                return self._validate_field_basic_fallback(config, parsed_value)
             except Exception as e:
                 # If AI parsing fails, fall back to simple parsing
                 pass
         
-        # Fallback to simple parsing
-        return self._simple_parse_field_value(config, user_input)
+        # Final fallback to simple parsing with basic validation
+        simple_value = self._simple_parse_field_value(config, user_input)
+        return self._validate_field_basic_fallback(config, simple_value)
     
     def _simple_parse_field_value(self, config: FieldConfig, user_input: str) -> Any:
         """Simple parsing fallback for basic types"""
@@ -324,8 +365,122 @@ class AIForm(Generic[T]):
         
         return value
     
-    def _create_model_instance(self) -> T:
-        """Create and validate Pydantic model instance"""
+    async def _validate_field_with_ai_tools(self, config: FieldConfig, value: Any) -> Any:
+        """Validate field using AI validation tools as core mechanism"""
+        if not self.validation_tools:
+            # Fallback to basic validation if AI tools not available
+            return self._validate_field_basic_fallback(config, value)
+        
+        try:
+            # Use AI validation tools as primary validation
+            result = await self.validation_tools.validate_field_with_ai(
+                config, 
+                str(value), 
+                self._collected_data
+            )
+            
+            if not result.is_valid:
+                raise ValidationError(result.error_message)
+            
+            return result.parsed_value
+            
+        except Exception as e:
+            # Fallback on AI tool failure
+            if "ValidationError" in str(type(e)):
+                raise e
+            return self._validate_field_basic_fallback(config, value)
+    
+    def _validate_field_basic_fallback(self, config: FieldConfig, value: Any) -> Any:
+        """Fallback validation when AI tools not available"""
+        # Email validation based on validation hint
+        if (config.validation_hint and 
+            'email' in config.validation_hint.lower() and 
+            isinstance(value, str)):
+            from ..validators.base import EmailValidator
+            validator = EmailValidator()
+            if not validator.validate(value, {}):
+                raise ValidationError(validator.get_error_message(value))
+        
+        return value
+    
+    def _handle_final_validation_error(self, e: ValidationError) -> FormResponse[T]:
+        """Handle final model validation errors by directing to specific fields"""
+        error_message = str(e)
+        
+        # Try to extract field-specific errors from Pydantic validation error
+        if "Model validation failed:" in error_message:
+            error_message = error_message.replace("Model validation failed: ", "")
+        
+        # Parse the error to find which field failed
+        failed_field = None
+        clean_error = error_message
+        
+        try:
+            # Parse Pydantic error format to extract field name
+            if "validation error" in error_message.lower():
+                lines = error_message.split('\n')
+                for i, line in enumerate(lines):
+                    if line.strip() and not line.startswith(' ') and not 'validation error' in line.lower():
+                        # This might be the field name
+                        potential_field = line.strip()
+                        if potential_field in self._field_configs:
+                            failed_field = potential_field
+                            # Get the actual error message
+                            if i + 1 < len(lines):
+                                clean_error_line = lines[i + 1].strip()
+                                if 'Value error,' in clean_error_line:
+                                    clean_error = clean_error_line.replace('Value error, ', '')
+                                elif 'type=' in clean_error_line:
+                                    # Extract message before type= part
+                                    clean_error = clean_error_line.split('[type=')[0].strip()
+                            break
+        except Exception:
+            # If parsing fails, use original error
+            pass
+        
+        # Set current field to the failed field for retry
+        if failed_field and failed_field in self._field_order:
+            self._current_field_index = self._field_order.index(failed_field)
+            current_field = failed_field
+            # Remove the failed field's data so it gets re-collected
+            if failed_field in self._collected_data:
+                del self._collected_data[failed_field]
+        else:
+            # Default to last field
+            self._current_field_index = max(0, len(self._field_order) - 1)
+            current_field = self._field_order[self._current_field_index] if self._field_order else None
+        
+        return FormResponse(
+            question=f"Please provide a valid {current_field}" if current_field else "Please check your input",
+            errors=[clean_error],
+            progress=self._calculate_progress(),
+            current_field=current_field,
+            collected_fields=list(self._collected_data.keys())
+        )
+    
+    async def _create_model_instance(self) -> T:
+        """Create and validate Pydantic model instance with AI tools"""
+        # First try AI-powered final validation
+        if self.validation_tools:
+            try:
+                result = await self.validation_tools.validate_form_with_ai(
+                    self._collected_data,
+                    self.model_class,
+                    self._field_configs
+                )
+                
+                if not result.is_valid:
+                    raise ValidationError(result.error_message)
+                
+                # If AI validation passes, create the model
+                return self.model_class(**result.parsed_value)
+                
+            except Exception as e:
+                # If AI validation fails, fall back to basic Pydantic validation
+                if "ValidationError" in str(type(e)):
+                    raise e
+        
+        # Fallback to basic Pydantic model validation
         try:
             return self.model_class(**self._collected_data)
         except PydanticValidationError as e:

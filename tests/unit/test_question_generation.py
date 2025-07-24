@@ -340,7 +340,7 @@ class TestAIQuestionGeneratorIntegration:
     @pytest.mark.asyncio
     async def test_ai_form_creation_with_use_ai_flag(self, simple_user_model):
         """Test creating AI form with use_ai flag"""
-        ai_form = AIForm(simple_user_model, use_ai=True)
+        ai_form = AIForm(simple_user_model, use_ai=True, test_mode=True)
         
         # With current implementation, use_ai doesn't auto-create AI components to avoid API key issues
         # User must explicitly set AI components
@@ -357,7 +357,7 @@ class TestAIQuestionGeneratorIntegration:
         default_form.question_generator = DefaultQuestionGenerator()
         
         # AI form with test mode
-        ai_form = AIForm(simple_user_model, use_ai=True)
+        ai_form = AIForm(simple_user_model, use_ai=True, test_mode=True)
         ai_form.question_generator = PydanticAIQuestionGenerator(test_mode=True)
         
         # Both should generate questions
@@ -381,7 +381,7 @@ class TestAIQuestionGeneratorIntegration:
             ai_forms.core.form.PYDANTIC_AI_AVAILABLE = False
             
             # Should fall back to default generator
-            form = AIForm(simple_user_model, use_ai=True)
+            form = AIForm(simple_user_model, use_ai=True, test_mode=True)
             assert not form.use_ai
             assert isinstance(form.question_generator, DefaultQuestionGenerator)
         

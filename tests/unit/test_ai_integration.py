@@ -170,7 +170,7 @@ class TestAIFormIntegration:
             age: int = Field(description="Age in years")
         
         # Create AI form in test mode
-        form = AIForm(SimpleModel, use_ai=True)
+        form = AIForm(SimpleModel, use_ai=True, test_mode=True)
         # Override with test mode generators
         form.question_generator = PydanticAIQuestionGenerator(test_mode=True)
         form.response_parser = AIResponseParser(test_mode=True)
@@ -192,7 +192,7 @@ class TestAIFormIntegration:
         default_response = await default_form.start()
         
         # AI form in test mode
-        ai_form = AIForm(simple_user_model, use_ai=True)
+        ai_form = AIForm(simple_user_model, use_ai=True, test_mode=True)
         ai_form.question_generator = PydanticAIQuestionGenerator(test_mode=True)
         ai_form.response_parser = AIResponseParser(test_mode=True)
         
@@ -210,7 +210,7 @@ class TestAIFormIntegration:
     @pytest.mark.asyncio
     async def test_ai_form_fallback_behavior(self, simple_user_model):
         """Test AI form fallback to simple parsing"""
-        form = AIForm(simple_user_model, use_ai=True)
+        form = AIForm(simple_user_model, use_ai=True, test_mode=True)
         form.question_generator = PydanticAIQuestionGenerator(test_mode=True)
         form.response_parser = AIResponseParser(test_mode=True)
         
@@ -234,7 +234,7 @@ class TestAIFormIntegration:
                 name: str = Field(description="Name")
             
             # Should fall back to default generator
-            form = AIForm(TestModel, use_ai=True)  # use_ai=True but unavailable
+            form = AIForm(TestModel, use_ai=True, test_mode=True)  # use_ai=True but unavailable
             assert not form.use_ai  # Should be False due to unavailability
             assert isinstance(form.question_generator, ai_forms.generators.base.DefaultQuestionGenerator)
             
@@ -252,7 +252,7 @@ class TestAIFormComplexTypes:
             skills: List[str] = Field(description="List of your skills")
             ratings: List[int] = Field(description="Ratings from 1-10")
         
-        form = AIForm(ModelWithList, use_ai=True)
+        form = AIForm(ModelWithList, use_ai=True, test_mode=True)
         form.question_generator = PydanticAIQuestionGenerator(test_mode=True)
         form.response_parser = AIResponseParser(test_mode=True)
         
@@ -270,7 +270,7 @@ class TestAIFormComplexTypes:
             company: Optional[str] = Field(None, description="Company name")
             phone: Optional[str] = Field(None, description="Phone number")
         
-        form = AIForm(ModelWithOptional, use_ai=True)
+        form = AIForm(ModelWithOptional, use_ai=True, test_mode=True)
         form.question_generator = PydanticAIQuestionGenerator(test_mode=True)
         form.response_parser = AIResponseParser(test_mode=True)
         

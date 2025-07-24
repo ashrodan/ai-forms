@@ -528,7 +528,7 @@ class TestAIWorkflowIntegration:
             newsletter: bool = Field(description="Subscribe to newsletter?")
         
         # Create AI form with test mode
-        form = AIForm(UserRegistration, use_ai=True)
+        form = AIForm(UserRegistration, use_ai=True, test_mode=True)
         form.question_generator = PydanticAIQuestionGenerator(test_mode=True)
         form.response_parser = AIResponseParser(test_mode=True)
         
@@ -569,7 +569,7 @@ class TestAIWorkflowIntegration:
         default_start = await default_form.start()
         
         # AI workflow
-        ai_form = AIForm(SimpleForm, use_ai=True)
+        ai_form = AIForm(SimpleForm, use_ai=True, test_mode=True)
         ai_form.question_generator = PydanticAIQuestionGenerator(test_mode=True)
         ai_form.response_parser = AIResponseParser(test_mode=True)
         
@@ -602,7 +602,7 @@ class TestAIWorkflowIntegration:
             company: Optional[str] = Field(None, description="Company name")
             role: Optional[str] = Field(None, description="Your role")
         
-        form = AIForm(ProfileForm, use_ai=True)
+        form = AIForm(ProfileForm, use_ai=True, test_mode=True)
         form.question_generator = PydanticAIQuestionGenerator(test_mode=True)
         form.response_parser = AIResponseParser(test_mode=True)
         
@@ -626,7 +626,7 @@ class TestAIWorkflowIntegration:
             skills: List[str] = Field(description="List of your skills")
             preferences: List[int] = Field(description="Rating preferences 1-10")
         
-        form = AIForm(ComplexForm, use_ai=True)
+        form = AIForm(ComplexForm, use_ai=True, test_mode=True)
         form.question_generator = PydanticAIQuestionGenerator(test_mode=True)
         form.response_parser = AIResponseParser(test_mode=True)
         
@@ -647,7 +647,7 @@ class TestAIWorkflowIntegration:
             email: str = Field(description="Valid email address")
             age: int = Field(description="Age in years", ge=0, le=150)
         
-        form = AIForm(ValidationForm, use_ai=True)
+        form = AIForm(ValidationForm, use_ai=True, test_mode=True)
         form.question_generator = PydanticAIQuestionGenerator(test_mode=True)
         form.response_parser = AIResponseParser(test_mode=True)
         
@@ -697,7 +697,7 @@ class TestAIWorkflowEdgeCases:
         class FallbackForm(BaseModel):
             name: str = Field(description="Your name")
         
-        form = AIForm(FallbackForm, use_ai=True)
+        form = AIForm(FallbackForm, use_ai=True, test_mode=True)
         
         # Create failing AI components by setting test_mode=False and no agent
         class FailingGenerator(PydanticAIQuestionGenerator):

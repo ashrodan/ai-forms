@@ -1,2 +1,3 @@
 _docs/
 **/__pycache__/
+.env

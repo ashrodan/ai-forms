@@ -1,7 +1,7 @@
 """Validation system tests"""
 import pytest
 from typing import Union, List, Optional
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, field_validator
 
 from ai_forms import AIForm, ValidationStrategy
 from ai_forms.validators.base import (
@@ -169,6 +169,313 @@ class TestFieldValidationIntegration:
         # Test valid age
         response = await form.respond("25")
         assert not response.errors
+    
+    @pytest.mark.asyncio
+    async def test_email_field_validator_integration(self):
+        """Test EmailValidator integration with Pydantic field_validator"""
+        class EmailValidatedModel(BaseModel):
+            name: str = Field(description="User name")
+            email: str = Field(description="Email address")
+            
+            @field_validator('email')
+            @classmethod
+            def validate_email(cls, v):
+                from ai_forms.validators.base import EmailValidator
+                validator = EmailValidator()
+                if not validator.validate(v, {}):
+                    raise ValueError(validator.get_error_message(v))
+                return v
+        
+        form = AIForm(EmailValidatedModel)
+        await form.start()
+        
+        # Test valid name
+        response = await form.respond("John Doe")
+        assert not response.errors
+        assert response.current_field == "email"
+        
+        # Test invalid email - should trigger field validator
+        response = await form.respond("invalid-email")
+        assert response.errors
+        assert "not a valid email address" in response.errors[0]
+        assert not response.is_complete
+        assert response.current_field == "email"  # Should stay on same field
+        
+        # Test another invalid email format
+        response = await form.respond("@domain.com")
+        assert response.errors
+        assert "not a valid email address" in response.errors[0]
+        
+        # Test valid email - should succeed
+        response = await form.respond("john@example.com")
+        assert not response.errors
+        assert response.is_complete
+        assert response.data.email == "john@example.com"
+    
+    @pytest.mark.asyncio
+    async def test_range_validator_integration(self):
+        """Test RangeValidator integration with Pydantic field_validator"""
+        class RangeValidatedModel(BaseModel):
+            age: int = Field(description="Age in years")
+            score: float = Field(description="Score percentage")
+            
+            @field_validator('age')
+            @classmethod
+            def validate_age(cls, v):
+                from ai_forms.validators.base import RangeValidator
+                validator = RangeValidator(min_val=13, max_val=120)
+                if not validator.validate(v, {}):
+                    raise ValueError(validator.get_error_message(v))
+                return v
+            
+            @field_validator('score')
+            @classmethod
+            def validate_score(cls, v):
+                from ai_forms.validators.base import RangeValidator
+                validator = RangeValidator(min_val=0.0, max_val=100.0)
+                if not validator.validate(v, {}):
+                    raise ValueError(validator.get_error_message(v))
+                return v
+        
+        form = AIForm(RangeValidatedModel)
+        await form.start()
+        
+        # Test valid age (validation happens at final model creation)
+        response = await form.respond("25")
+        assert not response.errors
+        assert response.current_field == "score"
+        
+        # Test valid score
+        response = await form.respond("85.5")
+        assert not response.errors
+        assert response.is_complete
+        assert response.data.age == 25
+        assert response.data.score == 85.5
+        
+        # Test invalid age with final validation
+        form2 = AIForm(RangeValidatedModel)
+        await form2.start()
+        await form2.respond("25")  # Valid age first
+        
+        # Try invalid score - should be caught at final validation
+        response = await form2.respond("150.5")
+        # With new approach, this may complete the form and then fail at model creation
+        # Reset and try a workflow that triggers final validation error
+        
+        form3 = AIForm(RangeValidatedModel)
+        await form3.start()
+        response = await form3.respond("10")  # Invalid age
+        response = await form3.respond("85.5")  # Valid score
+        
+        # Should fail at final model creation and redirect to age field
+        assert response.errors
+        assert "Value must be between 13 and 120" in response.errors[0]
+        assert response.current_field == "age"
+        
+        # Fix the age
+        response = await form3.respond("25")
+        assert not response.errors
+        assert response.is_complete
+    
+    @pytest.mark.asyncio
+    async def test_function_validator_integration(self):
+        """Test FunctionValidator integration with Pydantic field_validator"""
+        class FunctionValidatedModel(BaseModel):
+            name: str = Field(description="Full name")
+            description: str = Field(description="Description text")
+            
+            @field_validator('name')
+            @classmethod
+            def validate_name(cls, v):
+                from ai_forms.validators.base import FunctionValidator
+                
+                def name_validation(value):
+                    if not isinstance(value, str):
+                        return False
+                    value = value.strip()
+                    if len(value) < 2 or len(value) > 50:
+                        return False
+                    # Allow letters, spaces, hyphens, and apostrophes
+                    import re
+                    return bool(re.match(r"^[a-zA-Z\s\-']+$", value))
+                
+                validator = FunctionValidator(
+                    name_validation,
+                    "Name must be 2-50 characters and contain only letters, spaces, hyphens, and apostrophes"
+                )
+                if not validator.validate(v, {}):
+                    raise ValueError(validator.get_error_message(v))
+                return v.strip()
+            
+            @field_validator('description')
+            @classmethod
+            def validate_description(cls, v):
+                from ai_forms.validators.base import FunctionValidator
+                
+                def length_validation(value):
+                    if not isinstance(value, str):
+                        return False
+                    return 10 <= len(value.strip()) <= 200
+                
+                validator = FunctionValidator(
+                    length_validation,
+                    "Description must be between 10 and 200 characters"
+                )
+                if not validator.validate(v, {}):
+                    raise ValueError(validator.get_error_message(v))
+                return v.strip()
+        
+        # Test successful completion with valid data
+        form = AIForm(FunctionValidatedModel)
+        await form.start()
+        
+        response = await form.respond("John O'Connor-Smith")
+        assert not response.errors
+        assert response.current_field == "description"
+        
+        response = await form.respond("This is a detailed description that meets the length requirements.")
+        assert not response.errors
+        assert response.is_complete
+        assert response.data.name == "John O'Connor-Smith"
+        assert "detailed description" in response.data.description
+        
+        # Test final validation catches invalid name
+        form2 = AIForm(FunctionValidatedModel)
+        await form2.start()
+        
+        response = await form2.respond("A")  # Invalid name (too short)
+        response = await form2.respond("This is a detailed description that meets the length requirements.")
+        
+        # Should fail at final model creation and redirect to name field
+        assert response.errors
+        assert "Name must be 2-50 characters" in response.errors[0]
+        assert response.current_field == "name"
+        
+        # Fix the name
+        response = await form2.respond("John Smith")
+        assert not response.errors
+        assert response.is_complete
+        
+        # Test final validation catches invalid description
+        form3 = AIForm(FunctionValidatedModel)
+        await form3.start()
+        
+        response = await form3.respond("John Smith")  # Valid name
+        response = await form3.respond("Short")  # Invalid description
+        
+        # Should fail at final model creation and redirect to description field
+        assert response.errors
+        assert "Description must be between 10 and 200 characters" in response.errors[0]
+        assert response.current_field == "description"
+    
+    @pytest.mark.asyncio
+    async def test_combined_validators_integration(self):
+        """Test all three validators working together in a realistic form"""
+        class ComprehensiveForm(BaseModel):
+            name: str = Field(description="Full name")
+            email: str = Field(description="Email address")
+            age: int = Field(description="Age in years")
+            experience_years: int = Field(description="Years of experience")
+            
+            @field_validator('name')
+            @classmethod
+            def validate_name(cls, v):
+                from ai_forms.validators.base import FunctionValidator
+                
+                def name_validation(value):
+                    if not isinstance(value, str):
+                        return False
+                    value = value.strip()
+                    if len(value) < 2 or len(value) > 50:
+                        return False
+                    import re
+                    return bool(re.match(r"^[a-zA-Z\s\-']+$", value))
+                
+                validator = FunctionValidator(
+                    name_validation,
+                    "Name must be 2-50 characters and contain only letters, spaces, hyphens, and apostrophes"
+                )
+                if not validator.validate(v, {}):
+                    raise ValueError(validator.get_error_message(v))
+                return v.strip()
+            
+            @field_validator('email')
+            @classmethod
+            def validate_email(cls, v):
+                from ai_forms.validators.base import EmailValidator
+                validator = EmailValidator()
+                if not validator.validate(v, {}):
+                    raise ValueError(validator.get_error_message(v))
+                return v
+            
+            @field_validator('age')
+            @classmethod
+            def validate_age(cls, v):
+                from ai_forms.validators.base import RangeValidator
+                validator = RangeValidator(min_val=18, max_val=120)
+                if not validator.validate(v, {}):
+                    raise ValueError(validator.get_error_message(v))
+                return v
+            
+            @field_validator('experience_years')
+            @classmethod
+            def validate_experience(cls, v):
+                from ai_forms.validators.base import RangeValidator
+                validator = RangeValidator(min_val=0, max_val=50)
+                if not validator.validate(v, {}):
+                    raise ValueError(validator.get_error_message(v))
+                return v
+        
+        form = AIForm(ComprehensiveForm)
+        await form.start()
+        
+        # Test successful completion with valid data
+        response = await form.respond("Jane Smith")
+        assert not response.errors
+        
+        response = await form.respond("jane@example.com")
+        assert not response.errors
+        
+        response = await form.respond("28")
+        assert not response.errors
+        
+        response = await form.respond("8")
+        assert not response.errors
+        assert response.is_complete
+        
+        # Verify final data
+        assert response.data.name == "Jane Smith"
+        assert response.data.email == "jane@example.com"
+        assert response.data.age == 28
+        assert response.data.experience_years == 8
+        
+        # Test final validation with invalid data
+        form2 = AIForm(ComprehensiveForm)
+        await form2.start()
+        
+        # Collect all fields with some invalid data
+        response = await form2.respond("J")  # Invalid name (too short)
+        response = await form2.respond("jane@example.com")  # Valid email
+        response = await form2.respond("16")  # Invalid age (too young)
+        response = await form2.respond("8")  # Valid experience
+        
+        # Should fail at final validation and redirect to first invalid field
+        assert response.errors
+        # Should redirect to name field (first invalid field)
+        assert response.current_field == "name"
+        assert "Name must be 2-50 characters" in response.errors[0]
+        
+        # Fix the name
+        response = await form2.respond("Jane Smith")
+        # Should now fail on age validation
+        assert response.errors
+        assert response.current_field == "age"
+        assert "Value must be between 18 and 120" in response.errors[0]
+        
+        # Fix the age
+        response = await form2.respond("25")
+        assert not response.errors
+        assert response.is_complete
     
     @pytest.mark.asyncio
     async def test_optional_field_handling(self):
