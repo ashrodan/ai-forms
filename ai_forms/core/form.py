@@ -3,11 +3,14 @@ from pydantic import BaseModel, ValidationError as PydanticValidationError
 from pydantic_core import PydanticUndefined
 import inspect
 
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.test import TestModel
+
 from ..types.enums import ConversationMode, FieldPriority, ValidationStrategy
 from ..types.responses import FormResponse
 from ..types.config import FieldConfig
 from ..types.exceptions import ConfigurationError, ValidationError
-from ..generators.base import QuestionGenerator, DefaultQuestionGenerator, PydanticAIQuestionGenerator
+from ..generators.base import QuestionGenerator, DefaultQuestionGenerator, PydanticAIQuestionGenerator  
 from ..validation.ai_validator import AiValidator
 
 T = TypeVar('T', bound=BaseModel)
@@ -22,43 +25,216 @@ class AIForm(Generic[T]):
         mode: ConversationMode = ConversationMode.SEQUENTIAL,
         validation: ValidationStrategy = ValidationStrategy.IMMEDIATE,
         question_generator: Optional[QuestionGenerator] = None,
-        use_ai: bool = False,
+        use_ai: bool = True,
         ai_model: str = "openai:gpt-4o-mini",
         test_mode: bool = False
     ):
         self.model_class = model_class
-        self.mode = mode
-        self.validation = validation
         self.use_ai = use_ai
         self.ai_model = ai_model
         self.test_mode = test_mode
         
-        # Initialize question generator
-        if question_generator:
-            self.question_generator = question_generator
-        elif self.use_ai:
-            # Don't auto-create AI components in constructor to avoid API key issues
-            # Let user explicitly set test mode components if needed
-            self.question_generator = DefaultQuestionGenerator()
-        else:
-            self.question_generator = DefaultQuestionGenerator()
-        
-        # Initialize AI validator (core validation mechanism)
+        # Initialize AI validator (handles validation logic)
+        from ..validation.ai_validator import AiValidator
         self.ai_validator = AiValidator(
             use_ai=self.use_ai,
             test_mode=test_mode,
             ai_model=ai_model
         )
         
+        # Core conversational AI agent (handles conversation flow)
+        if self.use_ai:
+            model = TestModel() if test_mode else ai_model
+            self.agent = Agent(
+                model=model,
+                system_prompt=self._build_system_prompt()
+            )
+            
+            # Add tools to agent for field storage during conversation
+            @self.agent.tool
+            def store_field_value(ctx: RunContext['AIForm'], field_name: str, value: str) -> str:
+                """Store a field value when extracted from user input"""
+                return ctx.deps._store_field_value_impl(field_name, value)
+            
+            @self.agent.tool  
+            def get_missing_fields(ctx: RunContext['AIForm']) -> str:
+                """Check what fields are still needed"""
+                return ctx.deps._get_missing_fields_impl()
+            
+            @self.agent.tool
+            def validate_complete_form(ctx: RunContext['AIForm']) -> str:
+                """Check if form is complete and ready for submission"""
+                return ctx.deps._validate_complete_form_impl()
+        else:
+            self.agent = None
+        
         self._field_configs: Dict[str, FieldConfig] = {}
         self._collected_data: Dict[str, Any] = {}
-        self._current_field_index = 0
-        self._field_order: List[str] = []
-        self._hooks: List[Dict[str, Any]] = []
-        self._context: Dict[str, Any] = {}
-        self._started = False
+        self._conversation_history = []  # Will store pydantic-ai conversation history
+        self._form_complete = False
         
         self._initialize_fields()
+    
+    def _build_system_prompt(self) -> str:
+        """Build conversational system prompt from model definition"""
+        form_name = self.model_class.__name__
+        form_doc = self.model_class.__doc__ or f"{form_name} form"
+        
+        # Extract field information for prompt
+        model_fields = self.model_class.model_fields
+        type_hints = get_type_hints(self.model_class)
+        
+        field_descriptions = []
+        for field_name, field_info in model_fields.items():
+            field_type = type_hints.get(field_name, str)
+            description = field_info.description or f"{field_name} field"
+            
+            # Get validation constraints
+            constraints = []
+            if hasattr(field_info, 'ge') and field_info.ge is not None:
+                constraints.append(f"minimum: {field_info.ge}")
+            if hasattr(field_info, 'le') and field_info.le is not None:
+                constraints.append(f"maximum: {field_info.le}")
+            
+            # Get examples from json_schema_extra
+            extra = field_info.json_schema_extra or {}
+            examples = extra.get("examples", [])
+            
+            field_desc = f"- {field_name} ({field_type.__name__}): {description}"
+            if constraints:
+                field_desc += f" [{', '.join(constraints)}]"
+            if examples:
+                field_desc += f" (examples: {', '.join(examples[:3])})"
+            
+            field_descriptions.append(field_desc)
+        
+        return f"""You are helping a user fill out a {form_name} form through natural conversation.
+
+{form_doc}
+
+REQUIRED FIELDS:
+{chr(10).join(field_descriptions)}
+
+CRITICAL INSTRUCTIONS:
+- When you extract ANY field values from user input, IMMEDIATELY call store_field_value(field_name, value)
+- For boolean fields (like newsletter), responses like "yes", "sure", "no", "nope" are valid values - store them!
+- ALWAYS call get_missing_fields() at the start of each response to check current status
+- The tools tell you exactly what's stored and what's still needed - trust them completely
+- When all fields are collected, call validate_complete_form() to finish
+- If a field is successfully stored, don't ask for it again
+- ASK ONLY ONE QUESTION AT A TIME - don't overwhelm the user with multiple questions
+- Focus on the first missing field, then move to the next after it's collected
+
+WORKFLOW:
+1. Call get_missing_fields() to see what's needed
+2. If user provides data, immediately call store_field_value() 
+3. Ask for the FIRST missing field only (one question at a time)
+4. When no fields missing, call validate_complete_form()
+
+IMPORTANT: Use the tools by calling them directly - do NOT mention the tool calls in your response text. The tools work behind the scenes.
+
+Examples:
+1. Age field:
+User: "I am 25 years old"
+You internally: store_field_value("age", "25"), get_missing_fields()
+Response: "Perfect! I've got your age as 25. Now, would you like to receive our newsletter?"
+
+2. Boolean field:
+User: "sure" or "yes" 
+You internally: store_field_value("newsletter", "sure"), get_missing_fields()
+Response: "Great! Thanks for completing the form!"
+
+Start by greeting the user, then immediately check what fields are needed and ask for the first one."""
+
+    def _store_field_value_impl(self, field_name: str, value: str) -> str:
+        """Store a field value during conversation"""
+        if field_name not in self._field_configs:
+            available_fields = list(self._field_configs.keys())
+            return f"Error: Unknown field '{field_name}'. Available fields: {available_fields}"
+        
+        try:
+            config = self._field_configs[field_name]
+            
+            # Parse the value based on field type
+            if config.field_type == int:
+                parsed_value = int(value)
+            elif config.field_type == bool:
+                parsed_value = value.lower() in ('yes', 'true', 'y', '1', 'sure', 'ok', 'definitely', 'of course')
+            else:
+                parsed_value = value
+            
+            # Store the value
+            self._collected_data[field_name] = parsed_value
+            
+            # Check if form is now complete
+            missing = self._get_missing_required_fields()
+            if not missing:
+                self._form_complete = True
+            
+            return f"✅ Successfully stored {field_name}: {parsed_value}. Current data: {dict(self._collected_data)}"
+            
+        except (ValueError, TypeError) as e:
+            return f"❌ Error parsing {field_name} with value '{value}': {e}"
+    
+    def _get_missing_fields_impl(self) -> str:
+        """Get current form status - what's collected and what's still needed"""
+        required_fields = [name for name, config in self._field_configs.items() if config.required]
+        collected = {k: v for k, v in self._collected_data.items() if k in required_fields}
+        missing = [field for field in required_fields if field not in self._collected_data]
+        
+        status = f"FORM STATUS: Collected: {collected}. "
+        if missing:
+            status += f"Still need: {', '.join(missing)}"
+        else:
+            status += "✅ ALL FIELDS COLLECTED!"
+        
+        return status
+    
+    def _validate_complete_form_impl(self) -> str:
+        """Check if form is complete and ready for submission"""
+        required_fields = [name for name, config in self._field_configs.items() if config.required]
+        missing = [field for field in required_fields if field not in self._collected_data]
+        
+        if missing:
+            return f"Form incomplete. Still need: {', '.join(missing)}"
+        
+        try:
+            # Create the model instance to validate
+            model_instance = self.model_class(**self._collected_data)
+            self._form_complete = True
+            return "Form validation successful! Ready to submit."
+        except Exception as e:
+            return f"Form validation failed: {e}"
+
+    async def _extract_and_validate_fields(self, user_input: str):
+        """Extract and validate field values from user input using ai_validator"""
+        # Try to extract values for each missing field
+        for field_name, config in self._field_configs.items():
+            if field_name not in self._collected_data:  # Only process missing fields
+                try:
+                    # Use ai_validator to validate and parse the field from user input
+                    validated_value = await self.ai_validator.validate_field(
+                        config, 
+                        user_input, 
+                        self._collected_data
+                    )
+                    self._collected_data[field_name] = validated_value
+                except Exception:
+                    # If validation fails, field remains missing
+                    continue
+    
+    def _get_missing_required_fields(self) -> List[str]:
+        """Get list of required fields that are still missing"""
+        required_fields = [name for name, config in self._field_configs.items() if config.required]
+        return [field for field in required_fields if field not in self._collected_data]
+    
+    def _calculate_progress(self) -> float:
+        """Calculate form completion progress"""
+        total_fields = len(self._field_configs)
+        if total_fields == 0:
+            return 100.0
+        collected_count = len(self._collected_data)
+        return (collected_count / total_fields) * 100.0
     
     def _initialize_fields(self):
         """Extract field configurations from Pydantic model"""
@@ -89,49 +265,6 @@ class AIForm(Generic[T]):
             
             self._field_configs[field_name] = config
         
-        self._calculate_field_order()
-    
-    def _calculate_field_order(self):
-        """Calculate field order based on priorities and dependencies"""
-        # Simple topological sort for dependencies
-        visited = set()
-        temp_visited = set()
-        result = []
-        
-        def visit(field_name: str):
-            if field_name in temp_visited:
-                raise ConfigurationError(f"Circular dependency detected involving {field_name}")
-            if field_name in visited:
-                return
-                
-            temp_visited.add(field_name)
-            
-            config = self._field_configs[field_name]
-            for dep in config.dependencies:
-                if dep in self._field_configs:
-                    visit(dep)
-            
-            temp_visited.remove(field_name)
-            visited.add(field_name)
-            result.append(field_name)
-        
-        # Sort by priority first, then apply dependency ordering
-        priority_order = {
-            FieldPriority.CRITICAL: 0,
-            FieldPriority.HIGH: 1,
-            FieldPriority.MEDIUM: 2,
-            FieldPriority.LOW: 3
-        }
-        
-        sorted_fields = sorted(
-            self._field_configs.keys(),
-            key=lambda x: priority_order[self._field_configs[x].priority]
-        )
-        
-        for field_name in sorted_fields:
-            visit(field_name)
-        
-        self._field_order = result
     
     def configure_field(
         self,
@@ -172,172 +305,64 @@ class AIForm(Generic[T]):
         self._context.update(context)
     
     async def start(self) -> FormResponse[T]:
-        """Start the form conversation"""
-        self._started = True
-        self._current_field_index = 0
-        
-        if not self._field_order:
+        """Start the conversational form"""
+        if not self.use_ai or not self.agent:
+            # Fallback to simple mode
             return FormResponse(
-                is_complete=True,
-                data=await self._create_model_instance() if self._field_order else self.model_class(),
-                progress=100.0
+                question="Please provide the required information.",
+                progress=0.0
             )
         
-        return await self._get_next_question()
+        # Start conversation with AI agent and store conversation history
+        result = await self.agent.run("Hello", deps=self)
+        self._conversation_history = result.all_messages()
+        
+        return FormResponse(
+            question=result.output,
+            progress=0.0,
+            collected_fields=list(self._collected_data.keys())
+        )
     
     async def respond(self, user_input: str) -> FormResponse[T]:
-        """Process user response and return next question or completion"""
-        if not self._started:
-            raise ConfigurationError("Form not started. Call start() first.")
-        
-        if self._current_field_index >= len(self._field_order):
+        """Process user response through conversational AI with tool usage"""
+        if not self.use_ai or not self.agent:
+            # Fallback to simple mode
             return FormResponse(
-                is_complete=True,
-                data=await self._create_model_instance(),
-                progress=100.0
+                question="AI not available. Please provide information.",
+                progress=0.0
             )
         
-        current_field_name = self._field_order[self._current_field_index]
-        current_config = self._field_configs[current_field_name]
+        # Continue conversation with history context
+        result = await self.agent.run(
+            user_input, 
+            deps=self, 
+            message_history=self._conversation_history
+        )
+        self._conversation_history = result.all_messages()
+        ai_response = result.output
         
-        # Validate and store the input
-        try:
-            parsed_value = await self._parse_field_value(current_config, user_input)
-            self._collected_data[current_field_name] = parsed_value
-            self._current_field_index += 1
-            
-            # Check if we've now collected all fields (this handles the case where
-            # we're fixing a field after final validation error)
-            if len(self._collected_data) == len(self._field_order):
-                # All fields collected, try final validation
-                try:
-                    model_instance = await self._create_model_instance()
-                    return FormResponse(
-                        is_complete=True,
-                        data=model_instance,
-                        progress=100.0,
-                        collected_fields=list(self._collected_data.keys())
-                    )
-                except ValidationError as e:
-                    # Handle final model validation errors
-                    return self._handle_final_validation_error(e)
-            
-        except ValidationError as e:
-            return FormResponse(
-                question=await self.question_generator.generate_question(current_config, self._context),
-                errors=[str(e)],
-                retry_prompt=f"Please provide a valid {current_field_name}. {e}",
-                progress=self._calculate_progress(),
-                current_field=current_field_name,
-                collected_fields=list(self._collected_data.keys())
-            )
-        
-        # Check if form is complete
-        if self._current_field_index >= len(self._field_order):
+        # Check if form is complete (agent would have called validate_complete_form)
+        if self._form_complete:
             try:
-                model_instance = await self._create_model_instance()
+                model_instance = self.model_class(**self._collected_data)
                 return FormResponse(
                     is_complete=True,
                     data=model_instance,
                     progress=100.0,
                     collected_fields=list(self._collected_data.keys())
                 )
-            except ValidationError as e:
-                # Handle final model validation errors by directing user to specific field
-                return self._handle_final_validation_error(e)
+            except Exception as e:
+                return FormResponse(
+                    question=f"Let me verify your information. {ai_response}",
+                    progress=self._calculate_progress(),
+                    errors=[str(e)],
+                    collected_fields=list(self._collected_data.keys())
+                )
         
-        # Get next question
-        return await self._get_next_question()
-    
-    async def _get_next_question(self) -> FormResponse[T]:
-        """Get the next question in the sequence"""
-        if self._current_field_index >= len(self._field_order):
-            return FormResponse(
-                is_complete=True,
-                data=await self._create_model_instance(),
-                progress=100.0
-            )
-        
-        current_field_name = self._field_order[self._current_field_index]
-        current_config = self._field_configs[current_field_name]
-        
-        # Check skip condition
-        if current_config.skip_if and current_config.skip_if(self._collected_data):
-            self._current_field_index += 1
-            return await self._get_next_question()
-        
-        # Merge context with collected data for question generation
-        combined_context = {**self._context, **self._collected_data}
-        question = await self.question_generator.generate_question(current_config, combined_context)
-        
+        # Continue conversation
         return FormResponse(
-            question=question,
+            question=ai_response,
             progress=self._calculate_progress(),
-            current_field=current_field_name,
-            collected_fields=list(self._collected_data.keys())
-        )
-    
-    async def _parse_field_value(self, config: FieldConfig, user_input: str) -> Any:
-        """Parse and validate user input using AI-first validation"""
-        return await self.ai_validator.validate_field(
-            config,
-            user_input,
-            self._collected_data
-        )
-    
-    
-    def _handle_final_validation_error(self, e: ValidationError) -> FormResponse[T]:
-        """Handle final model validation errors by directing to specific fields"""
-        error_message = str(e)
-        
-        # Try to extract field-specific errors from Pydantic validation error
-        if "Model validation failed:" in error_message:
-            error_message = error_message.replace("Model validation failed: ", "")
-        
-        # Parse the error to find which field failed
-        failed_field = None
-        clean_error = error_message
-        
-        try:
-            # Parse Pydantic error format to extract field name
-            if "validation error" in error_message.lower():
-                lines = error_message.split('\n')
-                for i, line in enumerate(lines):
-                    if line.strip() and not line.startswith(' ') and not 'validation error' in line.lower():
-                        # This might be the field name
-                        potential_field = line.strip()
-                        if potential_field in self._field_configs:
-                            failed_field = potential_field
-                            # Get the actual error message
-                            if i + 1 < len(lines):
-                                clean_error_line = lines[i + 1].strip()
-                                if 'Value error,' in clean_error_line:
-                                    clean_error = clean_error_line.replace('Value error, ', '')
-                                elif 'type=' in clean_error_line:
-                                    # Extract message before type= part
-                                    clean_error = clean_error_line.split('[type=')[0].strip()
-                            break
-        except Exception:
-            # If parsing fails, use original error
-            pass
-        
-        # Set current field to the failed field for retry
-        if failed_field and failed_field in self._field_order:
-            self._current_field_index = self._field_order.index(failed_field)
-            current_field = failed_field
-            # Remove the failed field's data so it gets re-collected
-            if failed_field in self._collected_data:
-                del self._collected_data[failed_field]
-        else:
-            # Default to last field
-            self._current_field_index = max(0, len(self._field_order) - 1)
-            current_field = self._field_order[self._current_field_index] if self._field_order else None
-        
-        return FormResponse(
-            question=f"Please provide a valid {current_field}" if current_field else "Please check your input",
-            errors=[clean_error],
-            progress=self._calculate_progress(),
-            current_field=current_field,
             collected_fields=list(self._collected_data.keys())
         )
     
@@ -359,8 +384,3 @@ class AIForm(Generic[T]):
         except Exception as e:
             raise ValidationError(f"Model creation failed: {e}")
     
-    def _calculate_progress(self) -> float:
-        """Calculate form completion progress"""
-        if not self._field_order:
-            return 100.0
-        return (self._current_field_index / len(self._field_order)) * 100.0
