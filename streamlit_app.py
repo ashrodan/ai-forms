@@ -16,14 +16,8 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 from ai_forms import AIForm, FieldPriority, ConversationMode, ValidationStrategy
-from ai_forms.generators.base import PYDANTIC_AI_AVAILABLE
-
-if PYDANTIC_AI_AVAILABLE:
-    from ai_forms.generators.base import PydanticAIQuestionGenerator
-    from ai_forms.parsers.ai_parser import AIResponseParser
-    from ai_forms.validators.ai_tools import AIValidationTools, PYDANTIC_AI_AVAILABLE as AI_TOOLS_AVAILABLE
-else:
-    AI_TOOLS_AVAILABLE = False
+from ai_forms.generators.base import PydanticAIQuestionGenerator
+from ai_forms.parsers.ai_parser import AIResponseParser
 
 # Sample form models for testing
 class UserRegistration(BaseModel):
@@ -305,34 +299,15 @@ def main():
         
         use_ai = st.checkbox(
             "Enable AI Features",
-            value=PYDANTIC_AI_AVAILABLE,
-            disabled=not PYDANTIC_AI_AVAILABLE,
-            help="Use AI for intelligent question generation and response parsing"
+            value=True,
+            help="Use AI for intelligent validation and response parsing"
         )
         
-        if not PYDANTIC_AI_AVAILABLE:
-            st.warning("⚠️ Pydantic AI not available. Using default generators.")
-        
-        if use_ai and PYDANTIC_AI_AVAILABLE:
-            test_mode = st.checkbox(
-                "Test Mode",
-                value=True,
-                help="Use test mode for predictable responses (no API keys needed)"
-            )
-            
-            # AI Validation Tools toggle
-            use_ai_validation = st.checkbox(
-                "Enable AI Validation Tools",
-                value=AI_TOOLS_AVAILABLE,
-                disabled=not AI_TOOLS_AVAILABLE,
-                help="Use AI chat tools for validation (new feature)"
-            )
-        else:
-            test_mode = True
-            use_ai_validation = False
-            
-        if not AI_TOOLS_AVAILABLE and use_ai:
-            st.info("ℹ️ AI Validation Tools available but not enabled for this session")
+        test_mode = st.checkbox(
+            "Test Mode",
+            value=True,
+            help="Use test mode for predictable responses (no API keys needed)"
+        )
             
         # Reset button
         if st.button("🔄 Reset Form", type="secondary"):
@@ -351,18 +326,16 @@ def main():
             MODELS[selected_model_name],
             conversation_mode,
             validation_strategy,
-            use_ai and PYDANTIC_AI_AVAILABLE,
-            test_mode,
-            use_ai_validation if 'use_ai_validation' in locals() else False
+            use_ai,
+            test_mode
         )
     
     # Form summary and progress section
     display_form_summary()
     
-    # AI Validation Tools Testing section (only if enabled)
-    if AI_TOOLS_AVAILABLE:
-        st.header("🔧 AI Validation Tools Testing")
-        test_ai_validation_tools()
+    # AI Validation Testing section
+    st.header("🔧 AI Validation Testing")
+    test_ai_validation()
     
     # Interactive chat section
     st.header("💬 Interactive Form Chat")
@@ -455,7 +428,7 @@ def display_form_summary():
             status = "✅" if field_name in current_response.collected_fields else ("🔄" if field_name == current_response.current_field else "⏳")
             st.markdown(f"{status} {i}. `{field_name}`")
 
-def create_form(model_class, mode, validation, use_ai, test_mode, use_ai_validation=False):
+def create_form(model_class, mode, validation, use_ai, test_mode):
     """Create and initialize a form"""
     try:
         # Create form with AI validation tools if enabled
@@ -468,11 +441,8 @@ def create_form(model_class, mode, validation, use_ai, test_mode, use_ai_validat
         )
         
         # Set AI components if enabled
-        if use_ai and PYDANTIC_AI_AVAILABLE:
+        if use_ai:
             form.question_generator = PydanticAIQuestionGenerator(test_mode=test_mode)
-            form.response_parser = AIResponseParser(test_mode=test_mode)
-            
-            # AI validation tools are automatically created by the form constructor when use_ai=True
         
         # Store in session state
         st.session_state.form_instance = form
@@ -480,26 +450,23 @@ def create_form(model_class, mode, validation, use_ai, test_mode, use_ai_validat
         st.session_state.form_responses = []
         st.session_state.current_response = None
         
-        # Success message with AI validation tools status
+        # Success message with AI validation status
         success_msg = "✅ Form initialized successfully!"
-        if form.validation_tools and use_ai:
-            success_msg += "\n🤖 AI Validation Tools: ACTIVE"
+        if use_ai:
+            success_msg += "\n🤖 AI Validation: ACTIVE"
             if test_mode:
                 success_msg += " (Test Mode)"
             else:
                 success_msg += " (Live AI Mode)"
-        elif use_ai and PYDANTIC_AI_AVAILABLE:
-            success_msg += "\n🤖 AI Components: Active (Question Generation & Response Parsing only)"
         else:
-            success_msg += "\n📝 Standard Form Mode (No AI)"
+            success_msg += "\n📝 Standard Form Mode (Simple Validation)"
         
         # Debug info about form fields
         if st.checkbox("Show Debug Info", value=False, help="Show form field debugging information"):
             st.info(f"📊 Model fields: {list(form._field_configs.keys())}")
             st.info(f"📋 Field order: {form._field_order}")
-            if hasattr(form, 'validation_tools') and form.validation_tools:
-                st.info(f"🔧 Validation tools active: {form.validation_tools is not None}")
-                st.info(f"🧪 Test mode: {form.validation_tools.test_mode if form.validation_tools else 'N/A'}")
+            st.info(f"🤖 AI Validator: {form.ai_validator.is_ai_enabled}")
+            st.info(f"🧪 Test mode: {form.ai_validator.test_mode}")
         
         st.success(success_msg)
         
@@ -682,20 +649,17 @@ def display_completion_results(response):
         with st.expander("💬 Full Conversation History", expanded=True):
             display_conversation_history_content()
 
-def test_ai_validation_tools():
-    """Test AI validation tools directly"""
-    if not AI_TOOLS_AVAILABLE:
-        st.info("AI Validation Tools not available")
-        return
-    
-    with st.expander("🤖 Test AI Validation Tools", expanded=False):
-        st.markdown("Test the AI validation tools directly without running a full form.")
+def test_ai_validation():
+    """Test AI validation directly"""
+    with st.expander("🤖 Test AI Validation", expanded=False):
+        st.markdown("Test the AI validation system directly without running a full form.")
         
-        # Create validation tools instance
-        if 'validation_tools' not in st.session_state:
-            st.session_state.validation_tools = AIValidationTools(test_mode=True)
+        # Create AI validator instance
+        if 'ai_validator' not in st.session_state:
+            from ai_forms.validation.ai_validator import AiValidator
+            st.session_state.ai_validator = AiValidator(use_ai=True, test_mode=True)
         
-        tools = st.session_state.validation_tools
+        validator = st.session_state.ai_validator
         
         # Test field validation
         st.subheader("🔍 Field Validation Test")
@@ -729,79 +693,49 @@ def test_ai_validation_tools():
         
         if st.button("🔍 Test Field Validation", type="primary"):
             if field_value:
-                result = tools.validate_field(
-                    field_name=field_name,
-                    field_value=field_value,
-                    field_type=field_type,
-                    field_description=f"Test {field_name} field",
-                    validation_hint=validation_hint if validation_hint else None
+                # Create field config for validation
+                import asyncio
+                from ai_forms.types.config import FieldConfig
+                from ai_forms.types.enums import FieldPriority
+                
+                # Convert string type to actual type
+                type_map = {
+                    "str": str,
+                    "int": int, 
+                    "bool": bool,
+                    "float": float,
+                    "List[str]": list
+                }
+                actual_type = type_map.get(field_type, str)
+                
+                config = FieldConfig(
+                    name=field_name,
+                    field_type=actual_type,
+                    description=f"Test {field_name} field",
+                    validation_hint=validation_hint if validation_hint else None,
+                    priority=FieldPriority.MEDIUM,
+                    required=True
                 )
                 
-                # Display results
-                if result.is_valid:
+                async def test_validation():
+                    return await validator.validate_field(config, field_value, {})
+                
+                try:
+                    result = asyncio.run(test_validation())
+                    # Display results
                     st.success("✅ Validation Passed!")
                     st.json({
                         "input": field_value,
-                        "parsed_value": result.parsed_value,
-                        "type": str(type(result.parsed_value).__name__)
+                        "parsed_value": result,
+                        "type": str(type(result).__name__)
                     })
-                else:
-                    st.error(f"❌ Validation Failed: {result.error_message}")
+                except Exception as e:
+                    st.error(f"❌ Validation Failed: {str(e)}")
                     st.json({
                         "input": field_value,
-                        "error": result.error_message,
-                        "raw_value": result.parsed_value
+                        "error": str(e)
                     })
         
-        # Test form validation
-        st.subheader("📋 Form Validation Test")
-        
-        # Predefined test data
-        test_forms = {
-            "Valid User Data": {
-                "name": "John Doe",
-                "email": "john@example.com", 
-                "age": 25
-            },
-            "Invalid Email": {
-                "name": "Jane Smith",
-                "email": "invalid-email",
-                "age": 30
-            },
-            "Missing Required Field": {
-                "email": "test@example.com",
-                "age": 25
-            }
-        }
-        
-        selected_test = st.selectbox(
-            "Select Test Form Data",
-            options=list(test_forms.keys()),
-            help="Choose predefined test data or create custom"
-        )
-        
-        # Show and allow editing of test data
-        test_data = test_forms[selected_test].copy()
-        st.json(test_data)
-        
-        if st.button("🔍 Test Form Validation", type="primary"):
-            field_configs = {
-                "name": {"required": True, "field_type": "str"},
-                "email": {"required": True, "field_type": "str"},
-                "age": {"required": True, "field_type": "int"}
-            }
-            
-            result = tools.validate_form(
-                form_data=test_data,
-                model_class_name="TestModel",
-                field_configs=field_configs
-            )
-            
-            if result.is_valid:
-                st.success("✅ Form Validation Passed!")
-                st.json(result.parsed_value)
-            else:
-                st.error(f"❌ Form Validation Failed: {result.error_message}")
         
         # Quick examples section
         st.subheader("💡 Quick Examples")
@@ -820,19 +754,33 @@ def test_ai_validation_tools():
         
         for desc, value, ftype, hint in examples:
             if st.button(f"🚀 Test: {desc}", key=f"example_{desc}"):
-                result = tools.validate_field(
-                    field_name="test_field",
-                    field_value=value,
-                    field_type=ftype,
-                    field_description=desc,
-                    validation_hint=hint if hint else None
+                # Create field config for validation
+                type_map = {
+                    "str": str,
+                    "int": int, 
+                    "bool": bool,
+                    "float": float,
+                    "List[str]": list
+                }
+                actual_type = type_map.get(ftype, str)
+                
+                config = FieldConfig(
+                    name="test_field",
+                    field_type=actual_type,
+                    description=desc,
+                    validation_hint=hint if hint else None,
+                    priority=FieldPriority.MEDIUM,
+                    required=True
                 )
                 
-                with st.container():
-                    if result.is_valid:
-                        st.success(f"✅ {desc}: `{value}` → `{result.parsed_value}` ({type(result.parsed_value).__name__})")
-                    else:
-                        st.error(f"❌ {desc}: {result.error_message}")
+                async def test_example():
+                    return await validator.validate_field(config, value, {})
+                
+                try:
+                    result = asyncio.run(test_example())
+                    st.success(f"✅ {desc}: `{value}` → `{result}` ({type(result).__name__})")
+                except Exception as e:
+                    st.error(f"❌ {desc}: {str(e)}")
 
 def reset_form():
     """Reset the form to initial state"""

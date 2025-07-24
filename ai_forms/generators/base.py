@@ -2,13 +2,8 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 from ..types.config import FieldConfig
 
-try:
-    from pydantic_ai import Agent
-    from pydantic_ai.models.test import TestModel
-    PYDANTIC_AI_AVAILABLE = True
-except ImportError:
-    PYDANTIC_AI_AVAILABLE = False
-    TestModel = None
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 
 
 class QuestionGenerator(ABC):
@@ -50,8 +45,6 @@ class PydanticAIQuestionGenerator(QuestionGenerator):
     """AI-powered question generator using Pydantic AI"""
     
     def __init__(self, model_name: str = "openai:gpt-4o-mini", test_mode: bool = False):
-        if not PYDANTIC_AI_AVAILABLE:
-            raise ImportError("pydantic-ai is required for PydanticAIQuestionGenerator")
         
         self.test_mode = test_mode
         if test_mode:

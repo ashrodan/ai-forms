@@ -3,12 +3,8 @@ import pytest
 from unittest.mock import AsyncMock, patch
 
 from ai_forms import AIForm, FieldPriority
-from ai_forms.generators.base import QuestionGenerator, DefaultQuestionGenerator, PYDANTIC_AI_AVAILABLE
+from ai_forms.generators.base import QuestionGenerator, DefaultQuestionGenerator, PydanticAIQuestionGenerator
 from ai_forms.types.config import FieldConfig
-
-# Import AI components if available
-if PYDANTIC_AI_AVAILABLE:
-    from ai_forms.generators.base import PydanticAIQuestionGenerator
 
 
 class TestQuestionGeneratorBase:
@@ -333,7 +329,6 @@ class TestQuestionGenerationEdgeCases:
         assert "+" in question  # From second example
 
 
-@pytest.mark.skipif(not PYDANTIC_AI_AVAILABLE, reason="pydantic-ai not available")
 class TestAIQuestionGeneratorIntegration:
     """Test AI question generator integration"""
     

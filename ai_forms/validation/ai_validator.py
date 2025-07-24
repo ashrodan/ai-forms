@@ -31,12 +31,11 @@ class AiValidator:
     def _initialize_ai_validation(self):
         """Initialize AI validation tools using pydantic-ai"""
         try:
-            from ..validators.ai_tools import AIValidationTools, PYDANTIC_AI_AVAILABLE
-            if PYDANTIC_AI_AVAILABLE:
-                self.ai_validation_tools = AIValidationTools(
-                    model_name=self.ai_model,
-                    test_mode=self.test_mode
-                )
+            from ..validators.ai_tools import AIValidationTools
+            self.ai_validation_tools = AIValidationTools(
+                model_name=self.ai_model,
+                test_mode=self.test_mode
+            )
         except ImportError:
             pass
     

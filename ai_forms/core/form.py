@@ -7,7 +7,7 @@ from ..types.enums import ConversationMode, FieldPriority, ValidationStrategy
 from ..types.responses import FormResponse
 from ..types.config import FieldConfig
 from ..types.exceptions import ConfigurationError, ValidationError
-from ..generators.base import QuestionGenerator, DefaultQuestionGenerator, PydanticAIQuestionGenerator, PYDANTIC_AI_AVAILABLE
+from ..generators.base import QuestionGenerator, DefaultQuestionGenerator, PydanticAIQuestionGenerator
 from ..validation.ai_validator import AiValidator
 
 T = TypeVar('T', bound=BaseModel)

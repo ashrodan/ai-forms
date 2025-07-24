@@ -4,12 +4,8 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 from ai_forms import AIForm, ConversationMode, FieldPriority, ValidationStrategy
-from ai_forms.generators.base import QuestionGenerator, PYDANTIC_AI_AVAILABLE
-
-# Import AI components if available
-if PYDANTIC_AI_AVAILABLE:
-    from ai_forms.generators.base import PydanticAIQuestionGenerator
-    from ai_forms.parsers.ai_parser import AIResponseParser
+from ai_forms.generators.base import QuestionGenerator, PydanticAIQuestionGenerator
+from ai_forms.parsers.ai_parser import AIResponseParser
 
 
 class TestCompleteFormWorkflows:
@@ -514,7 +510,6 @@ class TestRealWorldScenarios:
         assert response.data.workshop_preference is None
 
 
-@pytest.mark.skipif(not PYDANTIC_AI_AVAILABLE, reason="pydantic-ai not available")
 class TestAIWorkflowIntegration:
     """Test AI-powered workflow integration"""
     
@@ -664,7 +659,6 @@ class TestAIWorkflowIntegration:
 class TestAIWorkflowEdgeCases:
     """Test AI workflow edge cases"""
     
-    @pytest.mark.skipif(not PYDANTIC_AI_AVAILABLE, reason="pydantic-ai not available")
     @pytest.mark.asyncio
     async def test_ai_form_with_mixed_ai_default_components(self):
         """Test form with AI generator but default parser"""
@@ -687,7 +681,6 @@ class TestAIWorkflowEdgeCases:
         assert response.is_complete
         assert response.data.age == 25  # Default parser should work
     
-    @pytest.mark.skipif(not PYDANTIC_AI_AVAILABLE, reason="pydantic-ai not available")
     @pytest.mark.asyncio
     async def test_ai_form_fallback_on_ai_failure(self):
         """Test fallback behavior when AI components fail"""

@@ -4,12 +4,7 @@ from pydantic import BaseModel, Field
 from ..types.config import FieldConfig
 from ..types.exceptions import ValidationError
 
-try:
-    from pydantic_ai import Agent
-    PYDANTIC_AI_AVAILABLE = True
-except ImportError:
-    PYDANTIC_AI_AVAILABLE = False
-    Agent = None
+from pydantic_ai import Agent
 
 
 class ValidationResult(BaseModel):
@@ -23,8 +18,6 @@ class AIValidationTools:
     """Core AI validation tools for form fields and final validation"""
     
     def __init__(self, model_name: str = "openai:gpt-4o-mini", test_mode: bool = False):
-        if not PYDANTIC_AI_AVAILABLE:
-            raise ImportError("pydantic-ai is required for AI validation tools")
         
         self.model_name = model_name
         self.test_mode = test_mode

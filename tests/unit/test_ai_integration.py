@@ -4,11 +4,8 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 from ai_forms import AIForm, ConversationMode, FieldPriority
-from ai_forms.generators.base import PydanticAIQuestionGenerator, PYDANTIC_AI_AVAILABLE
+from ai_forms.generators.base import PydanticAIQuestionGenerator
 from ai_forms.parsers.ai_parser import AIResponseParser
-
-# Skip all tests if pydantic-ai not available
-pytestmark = pytest.mark.skipif(not PYDANTIC_AI_AVAILABLE, reason="pydantic-ai not available")
 
 
 class TestPydanticAIQuestionGenerator:
