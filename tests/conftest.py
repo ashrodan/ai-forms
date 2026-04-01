@@ -3,6 +3,15 @@ import pytest
 from typing import List, Optional
 from pydantic import BaseModel, Field
 from ai_forms import AIForm, ConversationMode, FieldPriority, ValidationStrategy
+from .test_helpers import ensure_test_mode_environment, restore_environment
+
+
+@pytest.fixture(scope="session", autouse=True)
+def test_environment():
+    """Ensure clean test environment without API keys by default"""
+    original_env = ensure_test_mode_environment()
+    yield
+    restore_environment(original_env)
 
 
 @pytest.fixture
@@ -107,14 +116,14 @@ def circular_dependency_model():
 
 @pytest.fixture
 def simple_form(simple_user_model):
-    """Basic form instance for testing"""
-    return AIForm(simple_user_model)
+    """Basic form instance for testing (test mode enabled)"""
+    return AIForm(simple_user_model, test_mode=True)
 
 
 @pytest.fixture
 def complex_form(complex_job_model):
-    """Complex form instance for testing"""
-    return AIForm(complex_job_model)
+    """Complex form instance for testing (test mode enabled)"""
+    return AIForm(complex_job_model, test_mode=True)
 
 
 @pytest.fixture

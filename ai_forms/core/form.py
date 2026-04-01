@@ -30,6 +30,8 @@ class AIForm(Generic[T]):
         test_mode: bool = False
     ):
         self.model_class = model_class
+        self.mode = mode
+        self.validation = validation
         self.use_ai = use_ai
         self.ai_model = ai_model
         self.test_mode = test_mode
@@ -72,8 +74,12 @@ class AIForm(Generic[T]):
         self._collected_data: Dict[str, Any] = {}
         self._conversation_history = []  # Will store pydantic-ai conversation history
         self._form_complete = False
+        self._started = False
+        self._field_order: List[str] = []
+        self._context: Dict[str, Any] = {}
         
         self._initialize_fields()
+        self._calculate_field_order()
     
     def _build_system_prompt(self) -> str:
         """Build conversational system prompt from model definition"""
@@ -264,6 +270,12 @@ Start by greeting the user, then immediately check what fields are needed and as
             )
             
             self._field_configs[field_name] = config
+    
+    def _calculate_field_order(self):
+        """Calculate field order based on priority and dependencies"""
+        # Simple implementation - just use the order from field configs
+        # In the future this could implement proper dependency resolution
+        self._field_order = list(self._field_configs.keys())
         
     
     def configure_field(
@@ -306,6 +318,8 @@ Start by greeting the user, then immediately check what fields are needed and as
     
     async def start(self) -> FormResponse[T]:
         """Start the conversational form"""
+        self._started = True
+        
         if not self.use_ai or not self.agent:
             # Fallback to simple mode
             return FormResponse(

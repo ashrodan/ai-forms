@@ -184,8 +184,8 @@ class TestAIFormIntegration:
     @pytest.mark.asyncio
     async def test_ai_form_vs_default_form(self, simple_user_model):
         """Compare AI form with default form behavior"""
-        # Default form
-        default_form = AIForm(simple_user_model)
+        # Default form (use test_mode for unit tests)
+        default_form = AIForm(simple_user_model, test_mode=True)
         default_response = await default_form.start()
         
         # AI form in test mode

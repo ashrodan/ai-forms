@@ -93,7 +93,7 @@ class TestFieldValidationIntegration:
             boolean_field: bool = Field(description="A boolean field")
             string_field: str = Field(description="A string field")
         
-        form = AIForm(TypeTestModel)
+        form = AIForm(TypeTestModel, test_mode=True)
         await form.start()
         
         # Test integer field
@@ -123,12 +123,12 @@ class TestFieldValidationIntegration:
         class BoolModel(BaseModel):
             consent: bool = Field(description="Do you consent?")
         
-        form = AIForm(BoolModel)
+        form = AIForm(BoolModel, test_mode=True)
         
         # Test various true values
         true_values = ["yes", "Yes", "YES", "true", "True", "1", "y", "Y"]
         for value in true_values:
-            form = AIForm(BoolModel)
+            form = AIForm(BoolModel, test_mode=True)
             await form.start()
             response = await form.respond(value)
             assert response.is_complete
@@ -137,14 +137,14 @@ class TestFieldValidationIntegration:
         # Test various false values
         false_values = ["no", "No", "NO", "false", "False", "0", "n", "N"]
         for value in false_values:
-            form = AIForm(BoolModel)
+            form = AIForm(BoolModel, test_mode=True)
             await form.start()
             response = await form.respond(value)
             assert response.is_complete
             assert response.data.consent is False
         
         # Test invalid boolean
-        form = AIForm(BoolModel)
+        form = AIForm(BoolModel, test_mode=True)
         await form.start()
         response = await form.respond("maybe")
         assert response.errors
@@ -158,7 +158,7 @@ class TestFieldValidationIntegration:
             email: str = Field(pattern=r'^[^@]+@[^@]+\.[^@]+$', description="Valid email")
             score: float = Field(gt=0.0, lt=100.0, description="Score percentage")
         
-        form = AIForm(ConstrainedModel)
+        form = AIForm(ConstrainedModel, test_mode=True)
         await form.start()
         
         # Test age constraints - should pass basic int parsing but fail on model validation
@@ -186,7 +186,7 @@ class TestFieldValidationIntegration:
                     raise ValueError(validator.get_error_message(v))
                 return v
         
-        form = AIForm(EmailValidatedModel)
+        form = AIForm(EmailValidatedModel, test_mode=True)
         await form.start()
         
         # Test valid name
@@ -237,7 +237,7 @@ class TestFieldValidationIntegration:
                     raise ValueError(validator.get_error_message(v))
                 return v
         
-        form = AIForm(RangeValidatedModel)
+        form = AIForm(RangeValidatedModel, test_mode=True)
         await form.start()
         
         # Test valid age (validation happens at final model creation)
@@ -253,7 +253,7 @@ class TestFieldValidationIntegration:
         assert response.data.score == 85.5
         
         # Test invalid age with final validation
-        form2 = AIForm(RangeValidatedModel)
+        form2 = AIForm(RangeValidatedModel, test_mode=True)
         await form2.start()
         await form2.respond("25")  # Valid age first
         
@@ -262,7 +262,7 @@ class TestFieldValidationIntegration:
         # With new approach, this may complete the form and then fail at model creation
         # Reset and try a workflow that triggers final validation error
         
-        form3 = AIForm(RangeValidatedModel)
+        form3 = AIForm(RangeValidatedModel, test_mode=True)
         await form3.start()
         response = await form3.respond("10")  # Invalid age
         response = await form3.respond("85.5")  # Valid score
@@ -326,7 +326,7 @@ class TestFieldValidationIntegration:
                 return v.strip()
         
         # Test successful completion with valid data
-        form = AIForm(FunctionValidatedModel)
+        form = AIForm(FunctionValidatedModel, test_mode=True)
         await form.start()
         
         response = await form.respond("John O'Connor-Smith")
@@ -340,7 +340,7 @@ class TestFieldValidationIntegration:
         assert "detailed description" in response.data.description
         
         # Test final validation catches invalid name
-        form2 = AIForm(FunctionValidatedModel)
+        form2 = AIForm(FunctionValidatedModel, test_mode=True)
         await form2.start()
         
         response = await form2.respond("A")  # Invalid name (too short)
@@ -357,7 +357,7 @@ class TestFieldValidationIntegration:
         assert response.is_complete
         
         # Test final validation catches invalid description
-        form3 = AIForm(FunctionValidatedModel)
+        form3 = AIForm(FunctionValidatedModel, test_mode=True)
         await form3.start()
         
         response = await form3.respond("John Smith")  # Valid name
@@ -426,7 +426,7 @@ class TestFieldValidationIntegration:
                     raise ValueError(validator.get_error_message(v))
                 return v
         
-        form = AIForm(ComprehensiveForm)
+        form = AIForm(ComprehensiveForm, test_mode=True)
         await form.start()
         
         # Test successful completion with valid data
@@ -450,7 +450,7 @@ class TestFieldValidationIntegration:
         assert response.data.experience_years == 8
         
         # Test final validation with invalid data
-        form2 = AIForm(ComprehensiveForm)
+        form2 = AIForm(ComprehensiveForm, test_mode=True)
         await form2.start()
         
         # Collect all fields with some invalid data
@@ -485,7 +485,7 @@ class TestFieldValidationIntegration:
             optional_age: Optional[int] = Field(None, description="Optional age")
             optional_email: Optional[str] = Field(None, description="Optional email")
         
-        form = AIForm(OptionalModel)
+        form = AIForm(OptionalModel, test_mode=True)
         await form.start()
         
         # Provide required field
@@ -503,7 +503,7 @@ class TestFieldValidationIntegration:
         class ListModel(BaseModel):
             tags: List[str] = Field(default_factory=list, description="List of tags")
         
-        form = AIForm(ListModel)
+        form = AIForm(ListModel, test_mode=True)
         await form.start()
         
         # Test comma-separated list parsing
@@ -519,7 +519,7 @@ class TestFieldValidationIntegration:
         class UnionModel(BaseModel):
             value: Union[int, str] = Field(description="Number or text")
         
-        form = AIForm(UnionModel)
+        form = AIForm(UnionModel, test_mode=True)
         await form.start()
         
         # Should accept string (current implementation behavior)
@@ -533,18 +533,18 @@ class TestValidationStrategies:
     
     def test_immediate_validation_strategy(self, simple_user_model):
         """Test immediate validation strategy (default)"""
-        form = AIForm(simple_user_model, validation=ValidationStrategy.IMMEDIATE)
+        form = AIForm(simple_user_model, validation=ValidationStrategy.IMMEDIATE, test_mode=True)
         assert form.validation == ValidationStrategy.IMMEDIATE
     
     def test_cluster_validation_strategy(self, complex_job_model):
         """Test end-of-cluster validation strategy"""
-        form = AIForm(complex_job_model, validation=ValidationStrategy.END_OF_CLUSTER)
+        form = AIForm(complex_job_model, validation=ValidationStrategy.END_OF_CLUSTER, test_mode=True)
         assert form.validation == ValidationStrategy.END_OF_CLUSTER
         # Full implementation would defer validation until cluster completion
     
     def test_final_validation_strategy(self, simple_user_model):
         """Test final validation strategy"""
-        form = AIForm(simple_user_model, validation=ValidationStrategy.FINAL)
+        form = AIForm(simple_user_model, validation=ValidationStrategy.FINAL, test_mode=True)
         assert form.validation == ValidationStrategy.FINAL
         # Full implementation would defer all validation until form completion
 
@@ -630,7 +630,7 @@ class TestValidationErrorHandling:
         
         for case in edge_cases:
             # Reset form for each test
-            form = AIForm(simple_form.model_class)
+            form = AIForm(simple_form.model_class, test_mode=True)
             await form.start()
             response = await form.respond(case)
             # Should not crash, might have validation errors
@@ -643,7 +643,7 @@ class TestValidationErrorHandling:
             integer: int = Field(description="Integer field")
             float_val: float = Field(description="Float field")
         
-        form = AIForm(NumericModel)
+        form = AIForm(NumericModel, test_mode=True)
         await form.start()
         
         # Test integer edge cases
@@ -658,7 +658,7 @@ class TestValidationErrorHandling:
         ]
         
         for case, should_succeed in int_cases:
-            form = AIForm(NumericModel)
+            form = AIForm(NumericModel, test_mode=True)
             await form.start()
             response = await form.respond(case)
             

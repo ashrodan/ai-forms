@@ -1,69 +1,60 @@
 # AI Forms
 
-**AI-powered conversational form builder** that transforms Pydantic models into natural, intelligent data collection workflows.
+**AI-powered conversational form builder** that transforms Pydantic models into natural, intelligent conversations.
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Pydantic v2](https://img.shields.io/badge/pydantic-v2-green.svg)](https://pydantic.dev/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+## ✨ Key Features
 
-## Features
+- **🤖 Natural AI Conversations** - Turn rigid forms into friendly chat experiences
+- **🧠 Smart Field Extraction** - AI extracts multiple fields from single responses ("I'm 25 and yes to newsletter")
+- **🔧 Zero Setup** - Just add your Pydantic model and go
+- **📊 Real-time Progress** - Track completion and validation in real-time
 
-- **Natural Conversations** - AI generates contextual, friendly questions from field descriptions
-- **Intelligent Parsing** - Understands natural language responses ("twenty-eight" → 28)
-- **Zero Configuration** - Works with existing Pydantic models
-- **Progress Tracking** - Real-time completion progress and field validation
-- **Flexible Modes** - Sequential, clustered, or one-shot data collection
-- **Error Recovery** - Smart validation with helpful retry prompts
-- **Test-Friendly** - Deterministic test mode for CI/CD pipelines
-- **Multi-Provider** - Support for OpenAI, Anthropic, and more via Pydantic AI
-
-## Quick Start
-
-### Installation
+## 🚀 Quick Start
 
 ```bash
 pip install ai-forms
 ```
 
-### Basic Usage
+### Set up your API key
+```bash
+export OPENAI_API_KEY="your-openai-key"
+```
 
+### Create a conversational form
 ```python
 import asyncio
 from pydantic import BaseModel, Field
 from ai_forms import AIForm
 
-class UserProfile(BaseModel):
-    name: str = Field(description="Your full name")
-    age: int = Field(description="Age in years", ge=13, le=120) 
-    email: str = Field(description="Email address")
+class SimpleForm(BaseModel):
+    age: int = Field(description="Your age in years", ge=13, le=120)
     newsletter: bool = Field(description="Subscribe to newsletter?")
 
 async def main():
-    # Create form
-    form = AIForm(UserProfile)
+    # Create AI-powered form
+    form = AIForm(SimpleForm)
     
     # Start conversation
     response = await form.start()
     print(f"Bot: {response.question}")
+    # → "Hi! I'm here to help you fill out a quick form. What's your age in years?"
     
-    # Simulate user responses
-    response = await form.respond("Alice Johnson")
-    print(f"Bot: {response.question}")
+    while not response.is_complete:
+        user_input = input("You: ")
+        response = await form.respond(user_input)
+        print(f"Bot: {response.question}")
     
-    response = await form.respond("28")
-    print(f"Bot: {response.question}")
-    
-    response = await form.respond("alice@example.com")
-    print(f"Bot: {response.question}")
-    
-    response = await form.respond("yes")
-    
-    # Get final data
-    if response.is_complete:
-        user_data = response.data
-        print(f"Collected: {user_data}")
+    print(f"✅ Complete! Data: {response.data}")
 
 asyncio.run(main())
+```
+
+**Example conversation:**
+```
+Bot: Hi! I'm here to help you fill out a quick form. What's your age in years?
+You: I'm 25 years old and yes to newsletter
+Bot: Perfect! Thanks for completing the form!
+✅ Complete! Data: SimpleForm(age=25, newsletter=True)
 ```
 
 ## AI-Powered Features

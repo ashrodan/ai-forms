@@ -12,7 +12,7 @@ class TestAIFormInitialization:
     
     def test_form_initialization_with_simple_model(self, simple_user_model):
         """Test basic form initialization"""
-        form = AIForm(simple_user_model)
+        form = AIForm(simple_user_model, test_mode=True)
         
         assert form.model_class == simple_user_model
         assert form.mode == ConversationMode.SEQUENTIAL
@@ -23,29 +23,29 @@ class TestAIFormInitialization:
     def test_form_initialization_with_modes(self, simple_user_model, all_conversation_modes):
         """Test initialization with different conversation modes"""
         for mode in all_conversation_modes:
-            form = AIForm(simple_user_model, mode=mode)
+            form = AIForm(simple_user_model, mode=mode, test_mode=True)
             assert form.mode == mode
     
     def test_form_initialization_with_validation_strategies(self, simple_user_model, all_validation_strategies):
         """Test initialization with different validation strategies"""
         for strategy in all_validation_strategies:
-            form = AIForm(simple_user_model, validation=strategy)
+            form = AIForm(simple_user_model, validation=strategy, test_mode=True)
             assert form.validation == strategy
     
     def test_form_with_empty_model(self, empty_model):
         """Test form with model that has no fields"""
-        form = AIForm(empty_model)
+        form = AIForm(empty_model, test_mode=True)
         assert len(form._field_configs) == 0
         assert len(form._field_order) == 0
     
     def test_form_with_circular_dependencies(self, circular_dependency_model):
         """Test that circular dependencies raise ConfigurationError"""
         with pytest.raises(ConfigurationError, match="Circular dependency"):
-            AIForm(circular_dependency_model)
+            AIForm(circular_dependency_model, test_mode=True)
     
     def test_field_extraction_from_pydantic_model(self, complex_job_model):
         """Test that field configurations are properly extracted"""
-        form = AIForm(complex_job_model)
+        form = AIForm(complex_job_model, test_mode=True)
         
         # Check field configs exist
         assert "applicant_name" in form._field_configs
@@ -68,7 +68,7 @@ class TestAIFormFieldOrdering:
     
     def test_field_ordering_by_priority(self, simple_user_model):
         """Test fields are ordered by priority"""
-        form = (AIForm(simple_user_model)
+        form = (AIForm(simple_user_model, test_mode=True)
                 .configure_field("age", priority=FieldPriority.CRITICAL)
                 .configure_field("name", priority=FieldPriority.LOW)
                 .configure_field("email", priority=FieldPriority.HIGH))
@@ -79,7 +79,7 @@ class TestAIFormFieldOrdering:
     
     def test_field_ordering_with_dependencies(self, complex_job_model):
         """Test fields respect dependency ordering"""
-        form = AIForm(complex_job_model)
+        form = AIForm(complex_job_model, test_mode=True)
         
         # position should come before experience_years due to dependency
         position_idx = form._field_order.index("position")
@@ -101,7 +101,7 @@ class TestAIFormFieldOrdering:
                 }
             )
         
-        form = AIForm(TestModel)
+        form = AIForm(TestModel, test_mode=True)
         
         # low_priority must come first despite lower priority due to dependency
         assert form._field_order == ["low_priority", "depends_on_low"]
@@ -112,7 +112,7 @@ class TestAIFormConfiguration:
     
     def test_configure_field_fluent_interface(self, simple_user_model):
         """Test fluent configuration interface"""
-        form = (AIForm(simple_user_model)
+        form = (AIForm(simple_user_model, test_mode=True)
                 .configure_field("name", priority=FieldPriority.CRITICAL)
                 .configure_field("email", custom_question="What's your email?")
                 .configure_field("age", examples=["25", "30", "35"]))
@@ -124,14 +124,14 @@ class TestAIFormConfiguration:
     
     def test_configure_nonexistent_field(self, simple_user_model):
         """Test configuring non-existent field raises error"""
-        form = AIForm(simple_user_model)
+        form = AIForm(simple_user_model, test_mode=True)
         
         with pytest.raises(ConfigurationError, match="Field 'nonexistent' not found"):
             form.configure_field("nonexistent", priority=FieldPriority.HIGH)
     
     def test_field_reconfiguration_updates_ordering(self, simple_user_model):
         """Test that reconfiguring field priority updates ordering"""
-        form = AIForm(simple_user_model)
+        form = AIForm(simple_user_model, test_mode=True)
         original_order = form._field_order.copy()
         
         # Change priority of last field to critical
@@ -143,7 +143,7 @@ class TestAIFormConfiguration:
     
     def test_context_setting(self, simple_user_model):
         """Test context setting functionality"""
-        form = AIForm(simple_user_model)
+        form = AIForm(simple_user_model, test_mode=True)
         context = {"user_type": "returning", "source": "mobile"}
         
         form.set_context(context)
@@ -175,7 +175,7 @@ class TestAIFormLifecycle:
     @pytest.mark.asyncio
     async def test_form_start_empty_model(self, empty_model):
         """Test starting form with empty model"""
-        form = AIForm(empty_model)
+        form = AIForm(empty_model, test_mode=True)
         response = await form.start()
         
         assert response.is_complete
@@ -218,7 +218,7 @@ class TestAIFormLifecycle:
     @pytest.mark.asyncio
     async def test_skip_condition_handling(self, complex_job_model):
         """Test skip condition logic"""
-        form = AIForm(complex_job_model)
+        form = AIForm(complex_job_model, test_mode=True)
         await form.start()
         
         # Fill required fields up to experience_years
@@ -277,7 +277,7 @@ class TestAIFormErrorHandling:
         class StrictModel(BaseModel):
             age: int = Field(ge=0, le=120, description="Age in years")
         
-        form = AIForm(StrictModel)
+        form = AIForm(StrictModel, test_mode=True)
         await form.start()
         
         # Try age outside valid range
